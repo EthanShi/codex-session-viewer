@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Codex Session Viewer</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <header class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <img src="/icon.svg" alt="" />
+          </div>
+          <div>
+            <h1>Session Viewer</h1>
+            <p>Local Codex traces</p>
+          </div>
+        </header>
+
+        <div class="sidebar-tools">
+          <label class="search-box">
+            <span aria-hidden="true">⌕</span>
+            <input id="session-search" type="search" placeholder="搜索 session…" autocomplete="off" />
+            <kbd>/</kbd>
+          </label>
+          <div class="filter-row" role="group" aria-label="Session status">
+            <button class="filter active" data-filter="all">全部</button>
+            <button class="filter" data-filter="active">活跃</button>
+            <button class="filter" data-filter="archived">已归档</button>
+            <button id="refresh-button" class="icon-button" title="重新扫描" aria-label="重新扫描">↻</button>
+          </div>
+          <div class="display-controls">
+            <span>全局字体</span>
+            <div class="font-scale-control" role="group" aria-label="调整所有文本的字体大小">
+              <button id="font-decrease" class="font-scale-button" type="button" aria-label="减小所有字体">−</button>
+              <output id="font-scale-value" aria-live="polite">100%</output>
+              <button id="font-increase" class="font-scale-button" type="button" aria-label="增大所有字体">+</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="session-list" class="session-list" aria-live="polite"></div>
+
+        <footer class="sidebar-footer">
+          <span class="privacy-dot"></span>
+          <span>只读 · 数据仅在本机 127.0.0.1 传输</span>
+        </footer>
+      </aside>
+
+      <main class="workspace">
+        <div id="empty-state" class="empty-state">
+          <div class="empty-orbit" aria-hidden="true"><span></span></div>
+          <h2>选择一个 Codex session</h2>
+          <p>查看 system prompt、每轮 query、thinking、tool call 与 tool result。</p>
+        </div>
+
+        <div id="detail" class="detail hidden">
+          <header class="detail-header">
+            <div class="detail-title-wrap">
+              <div class="eyebrow"><span id="session-state-dot" class="state-dot"></span><span id="session-state"></span></div>
+              <h2 id="session-title"></h2>
+              <p id="session-id" class="mono"></p>
+            </div>
+            <div id="session-stats" class="stats"></div>
+          </header>
+
+          <section id="metadata" class="metadata-strip"></section>
+
+          <section class="system-section">
+            <div class="section-heading">
+              <div>
+                <span class="section-index">00</span>
+                <h3>System prompt</h3>
+              </div>
+              <span id="system-count" class="count-pill"></span>
+            </div>
+            <div id="system-prompts" class="system-prompts"></div>
+          </section>
+
+          <section class="turns-section">
+            <div id="turns"></div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

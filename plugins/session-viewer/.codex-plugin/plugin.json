@@ -1,0 +1,38 @@
+{
+  "name": "session-viewer",
+  "version": "0.1.0+codex.20260818082335",
+  "description": "Scan and inspect local Codex sessions in a private, read-only browser dashboard.",
+  "author": {
+    "name": "EthanShi",
+    "url": "https://github.com/EthanShi"
+  },
+  "homepage": "https://github.com/EthanShi/codex-session-viewer",
+  "repository": "https://github.com/EthanShi/codex-session-viewer",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "sessions",
+    "traces",
+    "debugging",
+    "viewer"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Session Viewer",
+    "shortDescription": "Inspect local Codex session traces",
+    "longDescription": "Launches a local-only, read-only dashboard that scans the current user's active and archived Codex sessions. It separates the instruction stack, then presents each turn as query, thinking and assistant output, plus tool calls and tool results.",
+    "developerName": "EthanShi",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Open my Codex Session Viewer",
+      "Launch the local session trace dashboard"
+    ],
+    "brandColor": "#8F7564",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/logo.svg"
+  }
+}

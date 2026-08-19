@@ -1,7 +1,7 @@
 {
   "name": "session-viewer",
-  "version": "0.1.0+codex.20260818082335",
-  "description": "Scan and inspect local Codex sessions in a private, read-only browser dashboard.",
+  "version": "0.1.0+codex.20260818153327",
+  "description": "Scan, inspect, and compare local Codex sessions in a private, read-only browser dashboard.",
   "author": {
     "name": "EthanShi",
     "url": "https://github.com/EthanShi"
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Session Viewer",
     "shortDescription": "Inspect local Codex session traces",
-    "longDescription": "Launches a local-only, read-only dashboard that scans the current user's active and archived Codex sessions. It separates the instruction stack, then presents each turn as query, thinking and assistant output, plus tool calls and tool results.",
+    "longDescription": "Launches a local-only, read-only dashboard that scans active and archived Codex sessions. It reports system prompt character and estimated token counts, compares two instruction stacks with highlighted differences, and presents each turn as query, thinking, tool calls, and tool results.",
     "developerName": "EthanShi",
     "category": "Developer Tools",
     "capabilities": [

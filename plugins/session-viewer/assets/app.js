@@ -7,6 +7,13 @@ import {
   saveFontScale,
 } from "./ui-preferences.mjs";
 import { renderCollapsedToolResult, renderCollapsedTurn } from "./ui-render.mjs";
+import {
+  analyzeSystemPrompts,
+  buildSideBySideDiff,
+  combineSystemPrompts,
+  splitChangedText,
+  summarizeDiff,
+} from "./prompt-analysis.mjs";
 
 const state = {
   sessions: [],
@@ -15,6 +22,8 @@ const state = {
   query: "",
   scan: null,
   fontScale: 1,
+  compareIds: [],
+  detailCache: new Map(),
 };
 
 const copyValues = new Map();
@@ -28,7 +37,15 @@ const elements = {
   fontDecrease: document.querySelector("#font-decrease"),
   fontIncrease: document.querySelector("#font-increase"),
   fontScaleValue: document.querySelector("#font-scale-value"),
+  compareSelectionLabel: document.querySelector("#compare-selection-label"),
+  compareClear: document.querySelector("#compare-clear"),
+  compareButton: document.querySelector("#compare-button"),
   empty: document.querySelector("#empty-state"),
+  compareView: document.querySelector("#compare-view"),
+  compareClose: document.querySelector("#compare-close"),
+  compareSessionSummary: document.querySelector("#compare-session-summary"),
+  compareDiffSummary: document.querySelector("#compare-diff-summary"),
+  compareDiff: document.querySelector("#compare-diff"),
   detail: document.querySelector("#detail"),
   title: document.querySelector("#session-title"),
   id: document.querySelector("#session-id"),
@@ -105,6 +122,10 @@ function formatDuration(milliseconds) {
   return `${Math.floor(milliseconds / 60_000)}m ${Math.round((milliseconds % 60_000) / 1000)}s`;
 }
 
+function formatCount(value) {
+  return new Intl.NumberFormat("zh-CN").format(Number(value) || 0);
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, { cache: "no-store" });
   const value = await response.json().catch(() => ({}));
@@ -137,8 +158,21 @@ function visibleSessions() {
   });
 }
 
+function renderCompareControls() {
+  const selected = state.compareIds
+    .map((id, index) => {
+      const session = state.sessions.find((item) => item.id === id);
+      return session ? `${index === 0 ? "A" : "B"} · ${session.title}` : null;
+    })
+    .filter(Boolean);
+  elements.compareSelectionLabel.textContent = selected.length ? selected.join("  /  ") : "请选择两个 session";
+  elements.compareClear.disabled = !state.compareIds.length;
+  elements.compareButton.disabled = state.compareIds.length !== 2;
+}
+
 function renderSessions() {
   const sessions = visibleSessions();
+  renderCompareControls();
   if (!sessions.length) {
     elements.list.innerHTML = `<div class="list-message">${state.sessions.length ? "没有匹配的 session" : "没有发现 Codex session"}</div>`;
     return;
@@ -149,20 +183,28 @@ function renderSessions() {
     .map((session) => {
       const group = groupLabel(session.updatedAt || session.timestamp);
       const heading = group !== lastGroup ? `<div class="session-group-label">${escapeHtml(group)}</div>` : "";
+      const compareIndex = state.compareIds.indexOf(session.id);
       lastGroup = group;
       return `${heading}
-        <button class="session-card ${session.id === state.selectedId ? "selected" : ""}" data-session-id="${escapeHtml(session.id)}" title="${escapeHtml(session.title)}">
-          <div class="session-card-top">
-            <span class="mini-state ${session.archived ? "archived" : ""}"></span>
-            <span class="session-card-title">${escapeHtml(session.title)}</span>
-            <span class="session-card-time">${escapeHtml(relativeTime(session.updatedAt || session.timestamp))}</span>
-          </div>
-          <div class="session-card-meta">
-            <span>${session.turnCount} turn${session.turnCount === 1 ? "" : "s"}</span>
-            <span>${escapeHtml(formatBytes(session.size))}</span>
-            <span>${escapeHtml(session.model || session.originator || "Codex")}</span>
-          </div>
-        </button>`;
+        <div class="session-entry">
+          <button class="session-card ${session.id === state.selectedId ? "selected" : ""}" data-session-id="${escapeHtml(session.id)}" title="${escapeHtml(session.title)}">
+            <div class="session-card-top">
+              <span class="mini-state ${session.archived ? "archived" : ""}"></span>
+              <span class="session-card-title">${escapeHtml(session.title)}</span>
+              <span class="session-card-time">${escapeHtml(relativeTime(session.updatedAt || session.timestamp))}</span>
+            </div>
+            <div class="session-card-meta">
+              <span>${session.turnCount} turn${session.turnCount === 1 ? "" : "s"}</span>
+              <span>${escapeHtml(formatBytes(session.size))}</span>
+              <span>${escapeHtml(session.model || session.originator || "Codex")}</span>
+            </div>
+            <div class="session-card-prompt-stats" title="System prompt 内容统计；token 为 Codex/GPT-5.x 离线预估值">
+              <span>${formatCount(session.systemPromptCharacters)} 字符</span>
+              <span>≈ ${formatCount(session.estimatedSystemPromptTokens)} tokens</span>
+            </div>
+          </button>
+          <button class="compare-toggle ${compareIndex >= 0 ? "selected" : ""}" data-compare-id="${escapeHtml(session.id)}" type="button" aria-pressed="${compareIndex >= 0}" title="${compareIndex >= 0 ? "取消对比选择" : "加入 system prompt 对比"}">${compareIndex >= 0 ? (compareIndex === 0 ? "A" : "B") : "+"}</button>
+        </div>`;
     })
     .join("");
 }
@@ -176,7 +218,9 @@ function metadataItem(label, value, title = value) {
 }
 
 function renderSystemPrompts(prompts) {
-  elements.systemCount.textContent = `${prompts.length} item${prompts.length === 1 ? "" : "s"}`;
+  const totals = analyzeSystemPrompts(prompts);
+  elements.systemCount.textContent = `${prompts.length} items · ${formatCount(totals.characterCount)} 字符 · ≈ ${formatCount(totals.estimatedTokens)} tokens`;
+  elements.systemCount.title = "System prompt 内容统计；token 为 Codex/GPT-5.x 离线预估值";
   if (!prompts.length) {
     elements.systemPrompts.innerHTML = '<div class="empty-cell">This rollout does not persist a readable system prompt.</div>';
     return;
@@ -185,7 +229,7 @@ function renderSystemPrompts(prompts) {
     .map(
       (prompt, index) => `
         <details class="prompt-card" data-prompt-kind="${escapeHtml(prompt.kind)}" ${index === 0 ? "open" : ""}>
-          <summary><span>${escapeHtml(prompt.label)}</span><span class="prompt-kind">${escapeHtml(prompt.kind)}</span></summary>
+          <summary><span>${escapeHtml(prompt.label)}</span><span class="prompt-metrics">${formatCount(prompt.characterCount)} 字符 · ≈ ${formatCount(prompt.estimatedTokens)} tokens</span><span class="prompt-kind">${escapeHtml(prompt.kind)}</span></summary>
           <pre class="prompt-content">${escapeHtml(prompt.content)}</pre>
         </details>`,
     )
@@ -294,19 +338,136 @@ function renderTurns(turns) {
     .join("");
 }
 
+function renderDiffCell(row, side) {
+  const value = side === "left" ? row.leftText : row.rightText;
+  if (row.kind === "unchanged") return escapeHtml(value);
+  if (row.kind === "changed") {
+    const parts = splitChangedText(row.leftText, row.rightText);
+    const changed = side === "left" ? parts.leftChanged : parts.rightChanged;
+    const markerClass = side === "left" ? "diff-removed-text" : "diff-added-text";
+    return `${escapeHtml(parts.prefix)}<mark class="${markerClass}">${escapeHtml(changed) || "&nbsp;"}</mark>${escapeHtml(parts.suffix)}`;
+  }
+  const markerClass = side === "left" ? "diff-removed-text" : "diff-added-text";
+  return value === "" ? "" : `<mark class="${markerClass}">${escapeHtml(value)}</mark>`;
+}
+
+function comparisonSessionCard(data, side) {
+  const totals = analyzeSystemPrompts(data.systemPrompts || []);
+  return `<article class="comparison-session-card side-${side.toLowerCase()}">
+    <div class="comparison-side">${side}</div>
+    <div>
+      <h3>${escapeHtml(data.summary.title)}</h3>
+      <p class="mono">${escapeHtml(data.summary.id)}</p>
+      <div class="comparison-metrics">
+        <span>${formatCount(totals.characterCount)} 字符</span>
+        <span>≈ ${formatCount(totals.estimatedTokens)} tokens</span>
+        <span>${data.systemPrompts?.length || 0} prompts</span>
+      </div>
+    </div>
+  </article>`;
+}
+
+function renderComparison(leftData, rightData) {
+  const rows = buildSideBySideDiff(
+    combineSystemPrompts(leftData.systemPrompts),
+    combineSystemPrompts(rightData.systemPrompts),
+  );
+  const summary = summarizeDiff(rows);
+  elements.compareSessionSummary.innerHTML =
+    comparisonSessionCard(leftData, "A") + comparisonSessionCard(rightData, "B");
+  elements.compareDiffSummary.innerHTML = summary.changedRows
+    ? `<span class="diff-chip removed">− ${formatCount(summary.removedLines)} 行</span><span class="diff-chip added">+ ${formatCount(summary.addedLines)} 行</span><span>${formatCount(summary.unchangedLines)} 行未变化</span>`
+    : '<span class="diff-identical">两个 session 的 system prompt 完全相同</span>';
+  elements.compareDiff.innerHTML = `<div class="diff-row diff-header" role="row">
+      <div class="diff-line-number">行</div><div class="diff-column-title">A · ${escapeHtml(leftData.summary.title)}</div>
+      <div class="diff-line-number">行</div><div class="diff-column-title">B · ${escapeHtml(rightData.summary.title)}</div>
+    </div>${rows
+      .map(
+        (row) => `<div class="diff-row ${row.kind}" role="row">
+          <div class="diff-line-number">${row.leftLine ?? ""}</div>
+          <pre class="diff-code left">${renderDiffCell(row, "left")}</pre>
+          <div class="diff-line-number">${row.rightLine ?? ""}</div>
+          <pre class="diff-code right">${renderDiffCell(row, "right")}</pre>
+        </div>`,
+      )
+      .join("")}`;
+}
+
+async function loadSessionDetail(id) {
+  if (!state.detailCache.has(id)) {
+    state.detailCache.set(
+      id,
+      fetchJson(`/api/sessions/${encodeURIComponent(id)}`).catch((error) => {
+        state.detailCache.delete(id);
+        throw error;
+      }),
+    );
+  }
+  return state.detailCache.get(id);
+}
+
+async function openComparison({ updateHash = true } = {}) {
+  if (state.compareIds.length !== 2) return;
+  elements.compareButton.disabled = true;
+  elements.compareButton.textContent = "正在比较…";
+  elements.empty.classList.add("hidden");
+  elements.detail.classList.add("hidden");
+  elements.compareView.classList.remove("hidden");
+  elements.compareDiff.innerHTML = '<div class="list-message">正在读取两个 session…</div>';
+  if (updateHash) history.replaceState(null, "", `#compare=${state.compareIds.map(encodeURIComponent).join(",")}`);
+  try {
+    const [leftData, rightData] = await Promise.all(state.compareIds.map(loadSessionDetail));
+    renderComparison(leftData, rightData);
+  } catch (error) {
+    elements.compareDiff.innerHTML = `<div class="list-message error">${escapeHtml(error.message)}</div>`;
+  } finally {
+    elements.compareButton.textContent = "开始比较";
+    elements.compareButton.disabled = state.compareIds.length !== 2;
+  }
+}
+
+function closeComparison() {
+  elements.compareView.classList.add("hidden");
+  if (state.selectedId) {
+    elements.detail.classList.remove("hidden");
+    history.replaceState(null, "", `#session=${encodeURIComponent(state.selectedId)}`);
+  } else {
+    elements.empty.classList.remove("hidden");
+    history.replaceState(null, "", location.pathname);
+  }
+}
+
+function toggleCompareSession(id) {
+  const selectedIndex = state.compareIds.indexOf(id);
+  if (selectedIndex >= 0) state.compareIds.splice(selectedIndex, 1);
+  else if (state.compareIds.length < 2) state.compareIds.push(id);
+  else {
+    showToast("最多选择两个 session，请先取消一个");
+    return;
+  }
+  renderSessions();
+}
+
 function renderDetail(data) {
   copyValues.clear();
   const { summary, metadata, systemPrompts, turns } = data;
   const toolCount = turns.reduce((total, turn) => total + (turn.toolCalls?.length || 0), 0);
   const thoughtCount = turns.reduce((total, turn) => total + (turn.thinking?.length || 0), 0);
+  const promptTotals = analyzeSystemPrompts(systemPrompts || []);
   elements.empty.classList.add("hidden");
+  elements.compareView.classList.add("hidden");
   elements.detail.classList.remove("hidden");
   elements.title.textContent = summary.title;
   elements.id.textContent = summary.id;
   elements.state.textContent = summary.archived ? "Archived session" : "Active session";
   elements.stateDot.classList.toggle("archived", summary.archived);
   elements.stats.innerHTML =
-    statCard(turns.length, "turns") + statCard(toolCount, "tools") + statCard(thoughtCount, "thoughts") + statCard(formatBytes(summary.size), "rollout");
+    statCard(turns.length, "turns") +
+    statCard(toolCount, "tools") +
+    statCard(thoughtCount, "thoughts") +
+    statCard(formatCount(promptTotals.characterCount), "prompt chars") +
+    statCard(`≈${formatCount(promptTotals.estimatedTokens)}`, "prompt tokens") +
+    statCard(formatBytes(summary.size), "rollout");
   elements.metadata.innerHTML = [
     metadataItem("Updated", formatDate(summary.updatedAt || summary.timestamp)),
     metadataItem("Model", metadata.model || summary.model || metadata.modelProvider),
@@ -331,6 +492,8 @@ async function loadSessions({ preserveSelection = true } = {}) {
   try {
     const result = await fetchJson("/api/sessions");
     state.sessions = result.sessions || [];
+    state.detailCache.clear();
+    state.compareIds = state.compareIds.filter((id) => state.sessions.some((session) => session.id === id));
     state.scan = result;
     if (!preserveSelection) state.selectedId = null;
     renderSessions();
@@ -347,6 +510,7 @@ async function selectSession(id, { updateHash = true } = {}) {
   state.selectedId = id;
   renderSessions();
   elements.empty.classList.add("hidden");
+  elements.compareView.classList.add("hidden");
   elements.detail.classList.remove("hidden");
   elements.title.textContent = "Loading session…";
   elements.id.textContent = id;
@@ -356,13 +520,18 @@ async function selectSession(id, { updateHash = true } = {}) {
   elements.turns.innerHTML = "";
   if (updateHash) history.replaceState(null, "", `#session=${encodeURIComponent(id)}`);
   try {
-    renderDetail(await fetchJson(`/api/sessions/${encodeURIComponent(id)}`));
+    renderDetail(await loadSessionDetail(id));
   } catch (error) {
     elements.systemPrompts.innerHTML = `<div class="list-message error">${escapeHtml(error.message)}</div>`;
   }
 }
 
 elements.list.addEventListener("click", (event) => {
+  const compareToggle = event.target.closest("[data-compare-id]");
+  if (compareToggle) {
+    toggleCompareSession(compareToggle.dataset.compareId);
+    return;
+  }
   const card = event.target.closest("[data-session-id]");
   if (card) selectSession(card.dataset.sessionId);
 });
@@ -391,6 +560,15 @@ elements.fontIncrease.addEventListener("click", () => {
   applyFontScale(adjustFontScale(state.fontScale, 1), { persist: true });
 });
 
+elements.compareClear.addEventListener("click", () => {
+  state.compareIds = [];
+  renderSessions();
+  if (!elements.compareView.classList.contains("hidden")) closeComparison();
+});
+
+elements.compareButton.addEventListener("click", () => openComparison());
+elements.compareClose.addEventListener("click", closeComparison);
+
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-copy]");
   if (!button) return;
@@ -414,7 +592,13 @@ document.addEventListener("keydown", (event) => {
 
 applyFontScale(loadFontScale(localStorage));
 await loadSessions();
-const hashId = new URLSearchParams(location.hash.slice(1)).get("session");
-if (hashId && state.sessions.some((session) => session.id === hashId)) {
+const hashParameters = new URLSearchParams(location.hash.slice(1));
+const compareIds = (hashParameters.get("compare") || "").split(",").filter(Boolean).map(decodeURIComponent);
+const hashId = hashParameters.get("session");
+if (compareIds.length === 2 && compareIds.every((id) => state.sessions.some((session) => session.id === id))) {
+  state.compareIds = compareIds;
+  renderSessions();
+  await openComparison({ updateHash: false });
+} else if (hashId && state.sessions.some((session) => session.id === hashId)) {
   await selectSession(hashId, { updateHash: false });
 }

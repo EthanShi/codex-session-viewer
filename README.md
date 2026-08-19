@@ -4,6 +4,13 @@ A private, read-only Codex plugin that scans the current device's local Codex se
 
 Each installation reads only that teammate's local Codex data. The plugin does not upload or share session contents.
 
+## Features
+
+- Shows the Unicode character count and an offline Codex/GPT-5.x token estimate for every session and every persisted system/developer prompt.
+- Selects any two sessions as A/B and compares their combined system prompt stacks side by side.
+- Highlights added and removed lines, plus the exact changed text inside modified lines.
+- Keeps turns and tool results collapsed by default for easier scanning.
+
 ## Install from the team marketplace
 
 Team members need access to this GitHub repository and a recent Codex installation.
@@ -41,4 +48,5 @@ Restart the desktop app and use a new task after upgrading.
 - The viewer binds only to `127.0.0.1`.
 - Session rollout files are treated as read-only.
 - Encrypted reasoning is not decoded.
+- Token counts are content-only estimates and do not include hidden message framing or API-side accounting.
 - The server does not expose session data to the LAN or the internet.

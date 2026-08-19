@@ -16,6 +16,7 @@ async function optionalImport(relativePath) {
 
 const preferences = await optionalImport("assets/ui-preferences.mjs");
 const renderers = await optionalImport("assets/ui-render.mjs");
+const promptAnalysis = await optionalImport("assets/prompt-analysis.mjs");
 const stylesheet = readFileSync(path.join(pluginRoot, "assets", "app.css"), "utf8");
 const icon = readFileSync(path.join(pluginRoot, "assets", "icon.svg"), "utf8");
 const logo = readFileSync(path.join(pluginRoot, "assets", "logo.svg"), "utf8");
@@ -86,4 +87,32 @@ test("session list and detail pane have independent vertical scrolling", () => {
   assert.match(stylesheet, /\.session-list\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*scroll/is);
   assert.match(stylesheet, /\.workspace\s*\{[^}]*height:\s*100vh[^}]*overflow-y:\s*scroll/is);
   assert.match(stylesheet, /scrollbar-gutter:\s*stable/i);
+});
+
+test("system prompt metrics count Unicode characters and estimate Codex tokens", () => {
+  assert.equal(typeof promptAnalysis?.analyzePromptText, "function", "analyzePromptText should be implemented");
+  assert.deepEqual(promptAnalysis.analyzePromptText("abc中文"), {
+    characterCount: 5,
+    estimatedTokens: 3,
+  });
+  assert.equal(promptAnalysis.estimateCodexTokens("a".repeat(40)), 10);
+  assert.equal(promptAnalysis.countCharacters("😀中文"), 3);
+});
+
+test("system prompt comparison aligns changed lines and highlights exact changed text", () => {
+  assert.equal(typeof promptAnalysis?.buildSideBySideDiff, "function", "buildSideBySideDiff should be implemented");
+  const rows = promptAnalysis.buildSideBySideDiff("same\nold value\ntail", "same\nnew value\ntail");
+  assert.deepEqual(rows.map((row) => row.kind), ["unchanged", "changed", "unchanged"]);
+  assert.deepEqual(promptAnalysis.splitChangedText("old value", "new value"), {
+    prefix: "",
+    leftChanged: "old",
+    rightChanged: "new",
+    suffix: " value",
+  });
+  assert.deepEqual(promptAnalysis.summarizeDiff(rows), {
+    changedRows: 1,
+    removedLines: 1,
+    addedLines: 1,
+    unchangedLines: 2,
+  });
 });

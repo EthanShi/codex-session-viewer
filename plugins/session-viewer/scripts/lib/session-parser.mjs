@@ -3,6 +3,7 @@ import { readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { analyzePromptText } from "../../assets/prompt-analysis.mjs";
 
 const SESSION_ID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
@@ -87,6 +88,16 @@ function textFromContent(content) {
     .join("\n\n");
 }
 
+function instructionText(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(instructionText).filter(Boolean).join("\n\n");
+  if (!value || typeof value !== "object") return "";
+  if (typeof value.text === "string") return value.text;
+  if (value.content) return textFromContent(value.content);
+  if (value.instructions) return instructionText(value.instructions);
+  return "";
+}
+
 function stringifyValue(value) {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -133,6 +144,12 @@ async function summarizeFile(filePath, archived, indexNames) {
   let agentPath = null;
   let turnCount = 0;
   let preview = "";
+  const systemPromptTexts = new Set();
+
+  function captureSystemPrompt(value) {
+    const content = String(value || "").trim();
+    if (content) systemPromptTexts.add(content);
+  }
 
   for await (const item of jsonLines(filePath)) {
     const payload = item?.payload || {};
@@ -145,9 +162,12 @@ async function summarizeFile(filePath, archived, indexNames) {
       parentThreadId = payload.parent_thread_id || parentThreadId;
       agentNickname = payload.agent_nickname || agentNickname;
       agentPath = payload.agent_path || agentPath;
+      captureSystemPrompt(instructionText(payload.base_instructions));
     } else if (item?.type === "turn_context") {
       model = payload.model || model;
       cwd = payload.cwd || cwd;
+    } else if (item?.type === "response_item" && payload.type === "message" && payload.role === "developer") {
+      captureSystemPrompt(textFromContent(payload.content));
     }
 
     if (payload.type === "task_started") turnCount += 1;
@@ -159,6 +179,15 @@ async function summarizeFile(filePath, archived, indexNames) {
   }
 
   const indexed = indexNames.get(id);
+  const systemPromptStats = [...systemPromptTexts].reduce(
+    (total, content) => {
+      const stats = analyzePromptText(content);
+      total.systemPromptCharacters += stats.characterCount;
+      total.estimatedSystemPromptTokens += stats.estimatedTokens;
+      return total;
+    },
+    { systemPromptCharacters: 0, estimatedSystemPromptTokens: 0 },
+  );
   return {
     id,
     title:
@@ -175,6 +204,8 @@ async function summarizeFile(filePath, archived, indexNames) {
     agentNickname,
     agentPath,
     turnCount,
+    systemPromptCount: systemPromptTexts.size,
+    ...systemPromptStats,
     archived,
     size: fileStats.size,
     filePath,
@@ -397,7 +428,7 @@ export async function readSession(filePath, archived = false) {
     const content = String(text || "").trim();
     if (!content || systemSeen.has(content)) return;
     systemSeen.add(content);
-    systemPrompts.push({ label, content, timestamp: timestamp || null, kind });
+    systemPrompts.push({ label, content, timestamp: timestamp || null, kind, ...analyzePromptText(content) });
   }
 
   function beginTurn(id, timestamp) {
@@ -431,7 +462,7 @@ export async function readSession(filePath, archived = false) {
         agentPath: payload.agent_path || metadata.agentPath,
         contextWindow: payload.context_window || metadata.contextWindow,
       });
-      addSystemPrompt("Base instructions", payload.base_instructions, timestamp, "base");
+      addSystemPrompt("Base instructions", instructionText(payload.base_instructions), timestamp, "base");
       continue;
     }
 
@@ -582,5 +613,7 @@ export async function readSession(filePath, archived = false) {
   metadata.id = String(metadata.id || idFromPath(filePath));
   metadata.turnCount = turns.length;
   metadata.systemPromptCount = systemPrompts.length;
+  metadata.systemPromptCharacters = systemPrompts.reduce((total, prompt) => total + prompt.characterCount, 0);
+  metadata.estimatedSystemPromptTokens = systemPrompts.reduce((total, prompt) => total + prompt.estimatedTokens, 0);
   return { metadata, systemPrompts, turns };
 }

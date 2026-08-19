@@ -41,6 +41,16 @@
               <button id="font-increase" class="font-scale-button" type="button" aria-label="增大所有字体">+</button>
             </div>
           </div>
+          <div class="compare-controls">
+            <div class="compare-control-copy">
+              <strong>System prompt 对比</strong>
+              <span id="compare-selection-label">请选择两个 session</span>
+            </div>
+            <div class="compare-actions">
+              <button id="compare-clear" class="compare-clear" type="button" disabled>清除</button>
+              <button id="compare-button" class="compare-button" type="button" disabled>开始比较</button>
+            </div>
+          </div>
         </div>
 
         <div id="session-list" class="session-list" aria-live="polite"></div>
@@ -57,6 +67,20 @@
           <h2>选择一个 Codex session</h2>
           <p>查看 system prompt、每轮 query、thinking、tool call 与 tool result。</p>
         </div>
+
+        <section id="compare-view" class="compare-view hidden" aria-live="polite">
+          <header class="compare-header">
+            <div>
+              <div class="eyebrow">SYSTEM PROMPT DIFF</div>
+              <h2>Session 对比</h2>
+              <p>绿色表示新增，红色表示删除；修改行会在两侧高亮具体变化片段。</p>
+            </div>
+            <button id="compare-close" class="compare-close" type="button">返回 session</button>
+          </header>
+          <div id="compare-session-summary" class="compare-session-summary"></div>
+          <div id="compare-diff-summary" class="compare-diff-summary"></div>
+          <div id="compare-diff" class="compare-diff"></div>
+        </section>
 
         <div id="detail" class="detail hidden">
           <header class="detail-header">

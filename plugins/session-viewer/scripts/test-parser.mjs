@@ -29,7 +29,7 @@ try {
         cwd: "D:\\fixture",
         originator: "codex_desktop",
         model_provider: "openai",
-        base_instructions: "Base system prompt",
+        base_instructions: { text: "Base system prompt", provenance: { source: "fixture" } },
       }),
       line("2026-08-18T10:00:01Z", "event_msg", {
         type: "task_started",
@@ -103,9 +103,15 @@ try {
   assert.equal(listing.sessions.length, 1);
   assert.equal(listing.sessions[0].title, "Synthetic parser test");
   assert.equal(listing.sessions[0].turnCount, 1);
+  assert.equal(listing.sessions[0].systemPromptCount, 2);
+  assert.ok(listing.sessions[0].systemPromptCharacters > 0);
+  assert.ok(listing.sessions[0].estimatedSystemPromptTokens > 0);
 
   const detail = await readSession(sessionPath);
   assert.equal(detail.systemPrompts.length, 2);
+  assert.equal(detail.metadata.systemPromptCharacters, listing.sessions[0].systemPromptCharacters);
+  assert.equal(detail.metadata.estimatedSystemPromptTokens, listing.sessions[0].estimatedSystemPromptTokens);
+  assert.ok(detail.systemPrompts.every((prompt) => prompt.characterCount > 0 && prompt.estimatedTokens > 0));
   assert.equal(detail.turns.length, 1);
   assert.equal(detail.turns[0].query, "Actual query");
   assert.equal(detail.turns[0].thinking[0].text, "Reasoning summary");

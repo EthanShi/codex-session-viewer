@@ -1,11 +1,11 @@
 ---
 name: session-viewer
-description: Launch the local, read-only Codex Session Viewer when the user asks to open, browse, inspect, or debug sessions, rollouts, turns, reasoning summaries, or tool traces on this device.
+description: Launch the local, read-only Session Viewer when the user asks to open, browse, inspect, or debug Codex or Claude Code sessions, rollouts, turns, reasoning, or tool traces on this device.
 ---
 
 # Session Viewer
 
-Start the bundled dashboard rather than manually printing rollout JSONL into the conversation.
+Start the bundled dashboard rather than manually printing local session JSONL into the conversation. The dashboard keeps Codex and Claude Code as separate selectable sources and displays only one source at a time.
 
 ## Launch
 
@@ -17,8 +17,10 @@ Do not open the URL automatically, do not navigate the Codex app to it, and do n
 
 ## Boundaries
 
-- Treat the Codex session store as read-only. Never edit, delete, rename, archive, or rewrite rollout files or `session_index.jsonl` as part of viewing.
+- Treat both session stores as read-only. Never edit, delete, rename, archive, or rewrite Codex rollout files, `session_index.jsonl`, or Claude Code project JSONL files as part of viewing.
 - Keep the service bound to `127.0.0.1`; do not expose it on a LAN address or tunnel it externally.
 - The viewer reads the current user's `CODEX_HOME` when set, otherwise `~/.codex`, including both `sessions` and `archived_sessions`.
-- Persisted reasoning may be encrypted. Show only explicit reasoning summaries and `agent_reasoning` text available in the rollout; do not claim that encrypted reasoning was decoded.
+- The viewer reads the current user's `CLAUDE_CONFIG_DIR` when set, otherwise `~/.claude`, and scans top-level session JSONL files under `projects/<project>/` without presenting nested subagent logs as independent sessions.
+- Codex reasoning may be encrypted, and Claude Code thinking blocks may omit readable text. Show only text explicitly available in the logs; do not claim hidden reasoning was decoded.
+- Claude Code logs do not persist the complete base system prompt. Label only explicit meta messages as persisted context; do not present them as the full Claude Code instruction stack.
 - Do not paste session contents into chat unless the user separately asks for analysis of a specific session.

@@ -4,7 +4,16 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getCodexRoot, listSessions, readSession } from "./lib/session-parser.mjs";
+import {
+  getClaudeRoot,
+  listClaudeSessions,
+  readClaudeSession,
+} from "./lib/claude-session-parser.mjs";
+import {
+  getCodexRoot,
+  listSessions as listCodexSessions,
+  readSession as readCodexSession,
+} from "./lib/session-parser.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const pluginRoot = path.dirname(scriptDirectory);
@@ -19,6 +28,22 @@ const host = "127.0.0.1";
 const requestedPort = Number(readArgument("--port", process.env.SESSION_VIEWER_PORT || "3847"));
 const port = Number.isInteger(requestedPort) && requestedPort >= 0 && requestedPort <= 65535 ? requestedPort : 3847;
 const codexRoot = path.resolve(readArgument("--codex-root", getCodexRoot()));
+const claudeRoot = path.resolve(readArgument("--claude-root", getClaudeRoot()));
+
+const sessionSources = {
+  codex: {
+    root: codexRoot,
+    list: listCodexSessions,
+    read: (summary) => readCodexSession(summary.filePath, summary.archived),
+    label: "Codex",
+  },
+  claude: {
+    root: claudeRoot,
+    list: listClaudeSessions,
+    read: (summary) => readClaudeSession(summary.filePath),
+    label: "Claude Code",
+  },
+};
 
 const staticFiles = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -69,36 +94,56 @@ async function requestHandler(request, response) {
 
   const url = new URL(request.url || "/", `http://${host}`);
   if (url.pathname === "/api/health") {
-    sendJson(response, 200, { ok: true, codexRoot });
+    sendJson(response, 200, {
+      ok: true,
+      sources: {
+        codex: { root: codexRoot },
+        claude: { root: claudeRoot },
+      },
+    });
     return;
   }
 
-  if (url.pathname === "/api/sessions") {
-    try {
-      sendJson(response, 200, await listSessions(codexRoot));
-    } catch (error) {
-      sendError(response, 500, error?.message || "Could not scan Codex sessions");
+  const sessionRoute = url.pathname.match(/^\/api\/sources\/([a-z-]+)\/sessions(?:\/([^/]+))?$/i);
+  if (sessionRoute) {
+    const sourceId = sessionRoute[1].toLowerCase();
+    const source = sessionSources[sourceId];
+    if (!source) {
+      sendError(response, 404, "Unknown session source");
+      return;
     }
-    return;
-  }
+    if (!sessionRoute[2]) {
+      try {
+        const listing = await source.list(source.root);
+        sendJson(response, 200, { ...listing, source: sourceId });
+      } catch (error) {
+        sendError(response, 500, error?.message || `Could not scan ${source.label} sessions`);
+      }
+      return;
+    }
 
-  if (url.pathname.startsWith("/api/sessions/")) {
-    const id = decodeURIComponent(url.pathname.slice("/api/sessions/".length));
+    let id;
+    try {
+      id = decodeURIComponent(sessionRoute[2]);
+    } catch {
+      sendError(response, 400, "Invalid session id");
+      return;
+    }
     if (!/^[0-9a-z-]{1,80}$/i.test(id)) {
       sendError(response, 400, "Invalid session id");
       return;
     }
     try {
-      const listing = await listSessions(codexRoot);
+      const listing = await source.list(source.root);
       const summary = listing.sessions.find((session) => session.id === id);
       if (!summary) {
         sendError(response, 404, "Session not found");
         return;
       }
-      const detail = await readSession(summary.filePath, summary.archived);
+      const detail = await source.read(summary);
       sendJson(response, 200, { summary, ...detail });
     } catch (error) {
-      sendError(response, 500, error?.message || "Could not read the session");
+      sendError(response, 500, error?.message || `Could not read the ${source.label} session`);
     }
     return;
   }
@@ -127,7 +172,8 @@ server.listen(port, host, () => {
   const address = server.address();
   const actualPort = typeof address === "object" && address ? address.port : port;
   console.log(`Session Viewer: http://${host}:${actualPort}`);
-  console.log(`Scanning: ${codexRoot}`);
+  console.log(`Codex sessions: ${codexRoot}`);
+  console.log(`Claude Code sessions: ${claudeRoot}`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {

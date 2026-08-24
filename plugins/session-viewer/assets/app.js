@@ -15,7 +15,55 @@ import {
   summarizeDiff,
 } from "./prompt-analysis.mjs";
 
+const SOURCES = {
+  codex: {
+    label: "Codex",
+    subtitle: "Local Codex traces",
+    emptyTitle: "选择一个 Codex session",
+    emptyDescription: "查看 system prompt、每轮 query、thinking、tool call 与 tool result。",
+    noSessions: "没有发现 Codex session",
+    scanning: "Scanning local Codex rollout files…",
+    parsing: "Parsing Codex rollout…",
+    activeState: "Active session",
+    promptHeading: "System prompt",
+    promptCompare: "System prompt 对比",
+    compareEyebrow: "SYSTEM PROMPT DIFF",
+    compareDescription: "绿色表示新增，红色表示删除；修改行会在两侧高亮具体变化片段。",
+    promptEmpty: "This Codex rollout does not persist a readable system prompt.",
+    promptMetricTitle: "System prompt 内容统计；token 为 Codex/GPT-5.x 离线预估值",
+    promptCharacterStat: "prompt chars",
+    promptTokenStat: "prompt tokens",
+    fileLabel: "Rollout file",
+    fileStatLabel: "rollout",
+    fallbackModel: "Codex",
+    hiddenThinkingLabel: "个 reasoning block 仅以加密形式持久化；这里只显示日志中明确保存的 summary。",
+  },
+  claude: {
+    label: "Claude Code",
+    subtitle: "Local Claude Code traces",
+    emptyTitle: "选择一个 Claude Code session",
+    emptyDescription: "查看每轮 query、thinking、tool call、tool result，以及 JSONL 中持久化的 context。",
+    noSessions: "没有发现 Claude Code session",
+    scanning: "Scanning local Claude Code session files…",
+    parsing: "Parsing Claude Code session…",
+    activeState: "Claude Code session",
+    promptHeading: "Persisted context",
+    promptCompare: "Context 对比",
+    compareEyebrow: "PERSISTED CONTEXT DIFF",
+    compareDescription: "仅比较 Claude Code JSONL 中明确持久化的 meta context；绿色表示新增，红色表示删除。",
+    promptEmpty: "Claude Code JSONL does not persist the full base system prompt; no readable meta context was found.",
+    promptMetricTitle: "Claude Code 持久化 context 内容统计；token 为通用离线预估值",
+    promptCharacterStat: "context chars",
+    promptTokenStat: "context tokens",
+    fileLabel: "Session file",
+    fileStatLabel: "session log",
+    fallbackModel: "Claude Code",
+    hiddenThinkingLabel: "个 thinking block 没有在 Claude Code JSONL 中持久化可读文本。",
+  },
+};
+
 const state = {
+  source: "codex",
   sessions: [],
   selectedId: null,
   filter: "all",
@@ -31,6 +79,9 @@ let copySequence = 0;
 let toastTimer = null;
 
 const elements = {
+  sourceTabs: [...document.querySelectorAll("[data-source]")],
+  archiveFilters: [...document.querySelectorAll(".source-archive-filter")],
+  brandSubtitle: document.querySelector("#brand-subtitle"),
   list: document.querySelector("#session-list"),
   search: document.querySelector("#session-search"),
   refresh: document.querySelector("#refresh-button"),
@@ -38,11 +89,16 @@ const elements = {
   fontIncrease: document.querySelector("#font-increase"),
   fontScaleValue: document.querySelector("#font-scale-value"),
   compareSelectionLabel: document.querySelector("#compare-selection-label"),
+  compareControlTitle: document.querySelector("#compare-control-title"),
   compareClear: document.querySelector("#compare-clear"),
   compareButton: document.querySelector("#compare-button"),
   empty: document.querySelector("#empty-state"),
+  emptyTitle: document.querySelector("#empty-title"),
+  emptyDescription: document.querySelector("#empty-description"),
   compareView: document.querySelector("#compare-view"),
   compareClose: document.querySelector("#compare-close"),
+  compareEyebrow: document.querySelector("#compare-eyebrow"),
+  compareDescription: document.querySelector("#compare-description"),
   compareSessionSummary: document.querySelector("#compare-session-summary"),
   compareDiffSummary: document.querySelector("#compare-diff-summary"),
   compareDiff: document.querySelector("#compare-diff"),
@@ -53,11 +109,47 @@ const elements = {
   stateDot: document.querySelector("#session-state-dot"),
   stats: document.querySelector("#session-stats"),
   metadata: document.querySelector("#metadata"),
+  systemHeading: document.querySelector("#system-heading"),
   systemCount: document.querySelector("#system-count"),
   systemPrompts: document.querySelector("#system-prompts"),
   turns: document.querySelector("#turns"),
   toast: document.querySelector("#toast"),
 };
+
+function sourceConfig() {
+  return SOURCES[state.source];
+}
+
+function sessionsApiPath(id = "") {
+  const base = `/api/sources/${encodeURIComponent(state.source)}/sessions`;
+  return id ? `${base}/${encodeURIComponent(id)}` : base;
+}
+
+function sourceHash(parameters = {}) {
+  const hash = new URLSearchParams({ source: state.source });
+  if (parameters.session) hash.set("session", parameters.session);
+  if (parameters.compare?.length) hash.set("compare", parameters.compare.join(","));
+  return `#${hash.toString()}`;
+}
+
+function updateSourceChrome() {
+  const config = sourceConfig();
+  document.title = `${config.label} · Session Viewer`;
+  elements.brandSubtitle.textContent = config.subtitle;
+  elements.emptyTitle.textContent = config.emptyTitle;
+  elements.emptyDescription.textContent = config.emptyDescription;
+  elements.compareControlTitle.textContent = config.promptCompare;
+  elements.compareEyebrow.textContent = config.compareEyebrow;
+  elements.compareDescription.textContent = config.compareDescription;
+  elements.systemHeading.textContent = config.promptHeading;
+  elements.sourceTabs.forEach((tab) => {
+    const selected = tab.dataset.source === state.source;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  elements.archiveFilters.forEach((button) => button.classList.toggle("hidden", state.source === "claude"));
+}
 
 function applyFontScale(value, { persist = false } = {}) {
   const normalized = persist ? saveFontScale(localStorage, value) : normalizeFontScale(value);
@@ -172,9 +264,10 @@ function renderCompareControls() {
 
 function renderSessions() {
   const sessions = visibleSessions();
+  const config = sourceConfig();
   renderCompareControls();
   if (!sessions.length) {
-    elements.list.innerHTML = `<div class="list-message">${state.sessions.length ? "没有匹配的 session" : "没有发现 Codex session"}</div>`;
+    elements.list.innerHTML = `<div class="list-message">${state.sessions.length ? "没有匹配的 session" : config.noSessions}</div>`;
     return;
   }
 
@@ -196,9 +289,9 @@ function renderSessions() {
             <div class="session-card-meta">
               <span>${session.turnCount} turn${session.turnCount === 1 ? "" : "s"}</span>
               <span>${escapeHtml(formatBytes(session.size))}</span>
-              <span>${escapeHtml(session.model || session.originator || "Codex")}</span>
+              <span>${escapeHtml(session.model || session.originator || config.fallbackModel)}</span>
             </div>
-            <div class="session-card-prompt-stats" title="System prompt 内容统计；token 为 Codex/GPT-5.x 离线预估值">
+            <div class="session-card-prompt-stats" title="${escapeHtml(config.promptMetricTitle)}">
               <span>${formatCount(session.systemPromptCharacters)} 字符</span>
               <span>≈ ${formatCount(session.estimatedSystemPromptTokens)} tokens</span>
             </div>
@@ -218,11 +311,12 @@ function metadataItem(label, value, title = value) {
 }
 
 function renderSystemPrompts(prompts) {
+  const config = sourceConfig();
   const totals = analyzeSystemPrompts(prompts);
   elements.systemCount.textContent = `${prompts.length} items · ${formatCount(totals.characterCount)} 字符 · ≈ ${formatCount(totals.estimatedTokens)} tokens`;
-  elements.systemCount.title = "System prompt 内容统计；token 为 Codex/GPT-5.x 离线预估值";
+  elements.systemCount.title = config.promptMetricTitle;
   if (!prompts.length) {
-    elements.systemPrompts.innerHTML = '<div class="empty-cell">This rollout does not persist a readable system prompt.</div>';
+    elements.systemPrompts.innerHTML = `<div class="empty-cell">${escapeHtml(config.promptEmpty)}</div>`;
     return;
   }
   elements.systemPrompts.innerHTML = prompts
@@ -257,7 +351,7 @@ function renderStepThinking(step) {
   }
   if (step.hiddenReasoningCount) {
     items.push(
-      `<div class="content-block notice-block">${step.hiddenReasoningCount} 个 reasoning block 仅以加密形式持久化；这里只显示日志中明确保存的 summary。</div>`,
+      `<div class="content-block notice-block">${step.hiddenReasoningCount} ${escapeHtml(sourceConfig().hiddenThinkingLabel)}</div>`,
     );
   }
   for (const message of step.assistantMessages || []) {
@@ -397,7 +491,7 @@ async function loadSessionDetail(id) {
   if (!state.detailCache.has(id)) {
     state.detailCache.set(
       id,
-      fetchJson(`/api/sessions/${encodeURIComponent(id)}`).catch((error) => {
+      fetchJson(sessionsApiPath(id)).catch((error) => {
         state.detailCache.delete(id);
         throw error;
       }),
@@ -414,9 +508,11 @@ async function openComparison({ updateHash = true } = {}) {
   elements.detail.classList.add("hidden");
   elements.compareView.classList.remove("hidden");
   elements.compareDiff.innerHTML = '<div class="list-message">正在读取两个 session…</div>';
-  if (updateHash) history.replaceState(null, "", `#compare=${state.compareIds.map(encodeURIComponent).join(",")}`);
+  if (updateHash) history.replaceState(null, "", sourceHash({ compare: state.compareIds }));
+  const source = state.source;
   try {
     const [leftData, rightData] = await Promise.all(state.compareIds.map(loadSessionDetail));
+    if (source !== state.source) return;
     renderComparison(leftData, rightData);
   } catch (error) {
     elements.compareDiff.innerHTML = `<div class="list-message error">${escapeHtml(error.message)}</div>`;
@@ -430,10 +526,10 @@ function closeComparison() {
   elements.compareView.classList.add("hidden");
   if (state.selectedId) {
     elements.detail.classList.remove("hidden");
-    history.replaceState(null, "", `#session=${encodeURIComponent(state.selectedId)}`);
+    history.replaceState(null, "", sourceHash({ session: state.selectedId }));
   } else {
     elements.empty.classList.remove("hidden");
-    history.replaceState(null, "", location.pathname);
+    history.replaceState(null, "", sourceHash());
   }
 }
 
@@ -450,6 +546,7 @@ function toggleCompareSession(id) {
 
 function renderDetail(data) {
   copyValues.clear();
+  const config = sourceConfig();
   const { summary, metadata, systemPrompts, turns } = data;
   const toolCount = turns.reduce((total, turn) => total + (turn.toolCalls?.length || 0), 0);
   const thoughtCount = turns.reduce((total, turn) => total + (turn.thinking?.length || 0), 0);
@@ -459,21 +556,21 @@ function renderDetail(data) {
   elements.detail.classList.remove("hidden");
   elements.title.textContent = summary.title;
   elements.id.textContent = summary.id;
-  elements.state.textContent = summary.archived ? "Archived session" : "Active session";
+  elements.state.textContent = summary.archived ? "Archived session" : config.activeState;
   elements.stateDot.classList.toggle("archived", summary.archived);
   elements.stats.innerHTML =
     statCard(turns.length, "turns") +
     statCard(toolCount, "tools") +
     statCard(thoughtCount, "thoughts") +
-    statCard(formatCount(promptTotals.characterCount), "prompt chars") +
-    statCard(`≈${formatCount(promptTotals.estimatedTokens)}`, "prompt tokens") +
-    statCard(formatBytes(summary.size), "rollout");
+    statCard(formatCount(promptTotals.characterCount), config.promptCharacterStat) +
+    statCard(`≈${formatCount(promptTotals.estimatedTokens)}`, config.promptTokenStat) +
+    statCard(formatBytes(summary.size), config.fileStatLabel);
   elements.metadata.innerHTML = [
     metadataItem("Updated", formatDate(summary.updatedAt || summary.timestamp)),
     metadataItem("Model", metadata.model || summary.model || metadata.modelProvider),
     metadataItem("Working directory", metadata.cwd || summary.cwd),
-    metadataItem("Source", metadata.originator || metadata.source || summary.originator),
-    metadataItem("Rollout file", summary.filePath),
+    metadataItem("Source", metadata.originator || metadata.entrypoint || metadata.source || summary.originator),
+    metadataItem(config.fileLabel, summary.filePath),
   ].join("");
   renderSystemPrompts(systemPrompts || []);
   renderTurns(turns || []);
@@ -487,10 +584,13 @@ function showToast(message) {
 }
 
 async function loadSessions({ preserveSelection = true } = {}) {
+  const source = state.source;
+  const config = sourceConfig();
   elements.refresh.classList.add("spinning");
-  if (!state.sessions.length) elements.list.innerHTML = '<div class="list-message">Scanning local rollout files…</div>';
+  if (!state.sessions.length) elements.list.innerHTML = `<div class="list-message">${escapeHtml(config.scanning)}</div>`;
   try {
-    const result = await fetchJson("/api/sessions");
+    const result = await fetchJson(sessionsApiPath());
+    if (source !== state.source) return;
     state.sessions = result.sessions || [];
     state.detailCache.clear();
     state.compareIds = state.compareIds.filter((id) => state.sessions.some((session) => session.id === id));
@@ -499,14 +599,17 @@ async function loadSessions({ preserveSelection = true } = {}) {
     renderSessions();
     if (result.errors?.length) showToast(`已扫描，${result.errors.length} 个文件无法读取`);
   } catch (error) {
+    if (source !== state.source) return;
     elements.list.innerHTML = `<div class="list-message error">${escapeHtml(error.message)}</div>`;
   } finally {
-    elements.refresh.classList.remove("spinning");
+    if (source === state.source) elements.refresh.classList.remove("spinning");
   }
 }
 
 async function selectSession(id, { updateHash = true } = {}) {
   if (!id) return;
+  const source = state.source;
+  const config = sourceConfig();
   state.selectedId = id;
   renderSessions();
   elements.empty.classList.add("hidden");
@@ -516,14 +619,40 @@ async function selectSession(id, { updateHash = true } = {}) {
   elements.id.textContent = id;
   elements.stats.innerHTML = "";
   elements.metadata.innerHTML = "";
-  elements.systemPrompts.innerHTML = '<div class="list-message">Parsing rollout…</div>';
+  elements.systemPrompts.innerHTML = `<div class="list-message">${escapeHtml(config.parsing)}</div>`;
   elements.turns.innerHTML = "";
-  if (updateHash) history.replaceState(null, "", `#session=${encodeURIComponent(id)}`);
+  if (updateHash) history.replaceState(null, "", sourceHash({ session: id }));
   try {
-    renderDetail(await loadSessionDetail(id));
+    const detail = await loadSessionDetail(id);
+    if (source !== state.source || state.selectedId !== id) return;
+    renderDetail(detail);
   } catch (error) {
+    if (source !== state.source || state.selectedId !== id) return;
     elements.systemPrompts.innerHTML = `<div class="list-message error">${escapeHtml(error.message)}</div>`;
   }
+}
+
+async function switchSource(source, { updateHash = true } = {}) {
+  if (!SOURCES[source] || source === state.source) return;
+  state.source = source;
+  state.sessions = [];
+  state.selectedId = null;
+  state.filter = "all";
+  state.query = "";
+  state.scan = null;
+  state.compareIds = [];
+  state.detailCache.clear();
+  elements.search.value = "";
+  document.querySelectorAll("[data-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.filter === "all");
+  });
+  elements.detail.classList.add("hidden");
+  elements.compareView.classList.add("hidden");
+  elements.empty.classList.remove("hidden");
+  updateSourceChrome();
+  renderSessions();
+  if (updateHash) history.replaceState(null, "", sourceHash());
+  await loadSessions({ preserveSelection: false });
 }
 
 elements.list.addEventListener("click", (event) => {
@@ -534,6 +663,19 @@ elements.list.addEventListener("click", (event) => {
   }
   const card = event.target.closest("[data-session-id]");
   if (card) selectSession(card.dataset.sessionId);
+});
+
+elements.sourceTabs.forEach((tab) => {
+  tab.addEventListener("click", () => switchSource(tab.dataset.source));
+  tab.addEventListener("keydown", (event) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowRight' ? 1 : -1;
+    const currentIndex = elements.sourceTabs.indexOf(tab);
+    const nextTab = elements.sourceTabs[(currentIndex + direction + elements.sourceTabs.length) % elements.sourceTabs.length];
+    nextTab.focus();
+    switchSource(nextTab.dataset.source);
+  });
 });
 
 elements.search.addEventListener("input", () => {
@@ -590,10 +732,13 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+const hashParameters = new URLSearchParams(location.hash.slice(1));
+const hashSource = hashParameters.get("source");
+if (SOURCES[hashSource]) state.source = hashSource;
+updateSourceChrome();
 applyFontScale(loadFontScale(localStorage));
 await loadSessions();
-const hashParameters = new URLSearchParams(location.hash.slice(1));
-const compareIds = (hashParameters.get("compare") || "").split(",").filter(Boolean).map(decodeURIComponent);
+const compareIds = (hashParameters.get("compare") || "").split(",").filter(Boolean);
 const hashId = hashParameters.get("session");
 if (compareIds.length === 2 && compareIds.every((id) => state.sessions.some((session) => session.id === id))) {
   state.compareIds = compareIds;

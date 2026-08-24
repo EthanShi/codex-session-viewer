@@ -50,7 +50,7 @@ button { color: inherit; }
 
 .sidebar {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   height: 100vh;
   min-height: 0;
   min-width: 0;
@@ -81,6 +81,28 @@ button { color: inherit; }
 .brand-mark img { width: 24px; height: 24px; }
 .brand h1 { margin: 0; font-family: "Space Grotesk", "Segoe UI Variable Display", Inter, sans-serif; font-size: 1.125rem; font-weight: 700; letter-spacing: -.02em; }
 .brand p { margin: 3px 0 0; color: var(--faint); font: .75rem/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+.source-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 10px 14px 0;
+  background: var(--panel);
+}
+.source-tab {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #050505;
+  color: var(--faint);
+  cursor: pointer;
+  font: .75rem ui-monospace, SFMono-Regular, Consolas, monospace;
+  transition: border-color .14s, background .14s, color .14s;
+}
+.source-tab:hover { border-color: var(--line-bright); color: var(--text); }
+.source-tab.active { border-color: rgba(237,118,95,.58); background: var(--accent-soft); color: #fff; }
+.source-tab:focus-visible { outline: 2px solid rgba(237,118,95,.75); outline-offset: 2px; }
 
 .sidebar-tools { padding: 14px 14px 12px; border-bottom: 1px solid var(--line); }
 

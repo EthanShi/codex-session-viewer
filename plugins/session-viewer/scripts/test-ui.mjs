@@ -21,6 +21,9 @@ const stylesheet = readFileSync(path.join(pluginRoot, "assets", "app.css"), "utf
 const icon = readFileSync(path.join(pluginRoot, "assets", "icon.svg"), "utf8");
 const logo = readFileSync(path.join(pluginRoot, "assets", "logo.svg"), "utf8");
 const launcher = readFileSync(path.join(pluginRoot, "scripts", "open-viewer.ps1"), "utf8");
+const documentHtml = readFileSync(path.join(pluginRoot, "assets", "index.html"), "utf8");
+const application = readFileSync(path.join(pluginRoot, "assets", "app.js"), "utf8");
+const server = readFileSync(path.join(pluginRoot, "scripts", "server.mjs"), "utf8");
 
 function memoryStorage(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -94,6 +97,19 @@ test("session list and detail pane have independent vertical scrolling", () => {
 test("launcher returns the local URL without opening it automatically", () => {
   assert.match(launcher, /url\s*=\s*\$viewerUrl/i);
   assert.doesNotMatch(launcher, /Start-Process\s+\$viewerUrl/i);
+  assert.match(launcher, /health\.sources\.codex/i);
+  assert.match(launcher, /health\.sources\.claude/i);
+});
+
+test("Codex and Claude Code are separate selectable session sources", () => {
+  assert.match(documentHtml, /data-source="codex"/);
+  assert.match(documentHtml, /data-source="claude"/);
+  assert.match(documentHtml, /role="tablist"/);
+  assert.match(application, /\/api\/sources\/\$\{encodeURIComponent\(state\.source\)\}\/sessions/);
+  assert.match(application, /state\.detailCache\.clear\(\)/);
+  assert.match(application, /state\.compareIds\s*=\s*\[\]/);
+  assert.match(server, /listClaudeSessions/);
+  assert.doesNotMatch(application, /fetchJson\("\/api\/sessions"\)/);
 });
 
 test("system prompt metrics count Unicode characters and estimate Codex tokens", () => {

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <title>Codex Session Viewer</title>
+    <title>Session Viewer</title>
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/app.css" />
   </head>
@@ -17,9 +17,18 @@
           </div>
           <div>
             <h1>Session Viewer</h1>
-            <p>Local Codex traces</p>
+            <p id="brand-subtitle">Local Codex traces</p>
           </div>
         </header>
+
+        <div class="source-tabs" role="tablist" aria-label="Session source">
+          <button class="source-tab active" data-source="codex" type="button" role="tab" aria-selected="true">
+            Codex
+          </button>
+          <button class="source-tab" data-source="claude" type="button" role="tab" aria-selected="false">
+            Claude Code
+          </button>
+        </div>
 
         <div class="sidebar-tools">
           <label class="search-box">
@@ -28,9 +37,9 @@
             <kbd>/</kbd>
           </label>
           <div class="filter-row" role="group" aria-label="Session status">
-            <button class="filter active" data-filter="all">全部</button>
-            <button class="filter" data-filter="active">活跃</button>
-            <button class="filter" data-filter="archived">已归档</button>
+            <button class="filter active" data-filter="all" type="button">全部</button>
+            <button class="filter source-archive-filter" data-filter="active" type="button">活跃</button>
+            <button class="filter source-archive-filter" data-filter="archived" type="button">已归档</button>
             <button id="refresh-button" class="icon-button" title="重新扫描" aria-label="重新扫描">↻</button>
           </div>
           <div class="display-controls">
@@ -43,7 +52,7 @@
           </div>
           <div class="compare-controls">
             <div class="compare-control-copy">
-              <strong>System prompt 对比</strong>
+              <strong id="compare-control-title">System prompt 对比</strong>
               <span id="compare-selection-label">请选择两个 session</span>
             </div>
             <div class="compare-actions">
@@ -64,16 +73,16 @@
       <main class="workspace">
         <div id="empty-state" class="empty-state">
           <div class="empty-orbit" aria-hidden="true"><span></span></div>
-          <h2>选择一个 Codex session</h2>
-          <p>查看 system prompt、每轮 query、thinking、tool call 与 tool result。</p>
+          <h2 id="empty-title">选择一个 Codex session</h2>
+          <p id="empty-description">查看 system prompt、每轮 query、thinking、tool call 与 tool result。</p>
         </div>
 
         <section id="compare-view" class="compare-view hidden" aria-live="polite">
           <header class="compare-header">
             <div>
-              <div class="eyebrow">SYSTEM PROMPT DIFF</div>
+              <div id="compare-eyebrow" class="eyebrow">SYSTEM PROMPT DIFF</div>
               <h2>Session 对比</h2>
-              <p>绿色表示新增，红色表示删除；修改行会在两侧高亮具体变化片段。</p>
+              <p id="compare-description">绿色表示新增，红色表示删除；修改行会在两侧高亮具体变化片段。</p>
             </div>
             <button id="compare-close" class="compare-close" type="button">返回 session</button>
           </header>
@@ -98,7 +107,7 @@
             <div class="section-heading">
               <div>
                 <span class="section-index">00</span>
-                <h3>System prompt</h3>
+                <h3 id="system-heading">System prompt</h3>
               </div>
               <span id="system-count" class="count-pill"></span>
             </div>

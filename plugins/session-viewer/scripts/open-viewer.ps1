@@ -13,7 +13,7 @@ if (-not $nodeCommand) {
 function Get-ViewerHealth([int]$CandidatePort) {
   try {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$CandidatePort/api/health" -TimeoutSec 1
-    if ($health.ok -eq $true) { return $health }
+    if ($health.ok -eq $true -and $health.sources.codex -and $health.sources.claude) { return $health }
   } catch {
     return $null
   }

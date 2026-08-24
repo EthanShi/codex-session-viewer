@@ -53,6 +53,7 @@ const staticFiles = new Map([
   ["/ui-preferences.mjs", { file: "ui-preferences.mjs", type: "text/javascript; charset=utf-8" }],
   ["/ui-render.mjs", { file: "ui-render.mjs", type: "text/javascript; charset=utf-8" }],
   ["/prompt-analysis.mjs", { file: "prompt-analysis.mjs", type: "text/javascript; charset=utf-8" }],
+  ["/session-groups.mjs", { file: "session-groups.mjs", type: "text/javascript; charset=utf-8" }],
   ["/icon.svg", { file: "icon.svg", type: "image/svg+xml" }],
 ]);
 

@@ -17,6 +17,7 @@ async function optionalImport(relativePath) {
 const preferences = await optionalImport("assets/ui-preferences.mjs");
 const renderers = await optionalImport("assets/ui-render.mjs");
 const promptAnalysis = await optionalImport("assets/prompt-analysis.mjs");
+const sessionGroups = await optionalImport("assets/session-groups.mjs");
 const stylesheet = readFileSync(path.join(pluginRoot, "assets", "app.css"), "utf8");
 const icon = readFileSync(path.join(pluginRoot, "assets", "icon.svg"), "utf8");
 const logo = readFileSync(path.join(pluginRoot, "assets", "logo.svg"), "utf8");
@@ -110,6 +111,27 @@ test("Codex and Claude Code are separate selectable session sources", () => {
   assert.match(application, /state\.compareIds\s*=\s*\[\]/);
   assert.match(server, /listClaudeSessions/);
   assert.doesNotMatch(application, /fetchJson\("\/api\/sessions"\)/);
+});
+
+test("sessions are grouped by normalized project path and ordered by recent activity", () => {
+  assert.equal(typeof sessionGroups?.groupSessionsByProject, "function", "session grouping should be implemented");
+  const groups = sessionGroups.groupSessionsByProject([
+    { id: "alpha-old", cwd: "D:\\work\\alpha", updatedAt: "2026-08-22T10:00:00Z" },
+    { id: "unknown", cwd: null, updatedAt: "2026-08-21T10:00:00Z" },
+    { id: "beta", cwd: "/work/beta", updatedAt: "2026-08-24T10:00:00Z" },
+    { id: "alpha-new", cwd: "d:/work/alpha/", updatedAt: "2026-08-23T10:00:00Z" },
+  ]);
+  assert.deepEqual(groups.map((group) => group.name), ["beta", "alpha", "未知项目"]);
+  assert.deepEqual(groups[1].sessions.map((session) => session.id), ["alpha-new", "alpha-old"]);
+  assert.equal(groups[1].path, "D:\\work\\alpha");
+});
+
+test("project groups expose independent accessible collapse controls", () => {
+  assert.match(application, /groupSessionsByProject\(sessions\)/);
+  assert.match(application, /data-project-toggle=/);
+  assert.match(application, /aria-expanded=/);
+  assert.match(application, /state\.collapsedProjects\.has\(group\.key\)/);
+  assert.match(stylesheet, /\.project-session-list\[hidden\]\s*\{\s*display:\s*none/is);
 });
 
 test("system prompt metrics count Unicode characters and estimate Codex tokens", () => {

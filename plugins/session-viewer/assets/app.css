@@ -168,7 +168,30 @@ kbd { padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; color
   scrollbar-color: var(--line-bright) var(--panel);
   scrollbar-gutter: stable;
 }
-.session-group-label { padding: 14px 10px 7px; color: var(--faint); font: .75rem ui-monospace, monospace; letter-spacing: .11em; text-transform: uppercase; }
+.session-project-group + .session-project-group { margin-top: 5px; }
+.project-group-toggle {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 10px 9px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+.project-group-toggle:hover { background: var(--panel-2); color: var(--text); }
+.project-group-chevron { width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg) translate(-1px, -1px); transition: transform .14s; }
+.project-group-toggle[aria-expanded="false"] .project-group-chevron { transform: rotate(-45deg); }
+.project-group-copy { min-width: 0; }
+.project-group-copy strong, .project-group-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-group-copy strong { color: #d8d8d8; font-size: .75rem; font-weight: 650; }
+.project-group-copy span { margin-top: 3px; color: var(--faint); font: .625rem ui-monospace, monospace; }
+.project-group-count { min-width: 22px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--faint); font: .625rem ui-monospace, monospace; text-align: center; }
+.project-session-list[hidden] { display: none; }
 
 .session-entry { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: stretch; gap: 3px; margin-bottom: 3px; }
 

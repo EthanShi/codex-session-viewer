@@ -14,6 +14,7 @@ import {
   splitChangedText,
   summarizeDiff,
 } from "./prompt-analysis.mjs";
+import { groupSessionsByProject } from "./session-groups.mjs";
 
 const SOURCES = {
   codex: {
@@ -72,6 +73,7 @@ const state = {
   fontScale: 1,
   compareIds: [],
   detailCache: new Map(),
+  collapsedProjects: new Set(),
 };
 
 const copyValues = new Map();
@@ -225,19 +227,6 @@ async function fetchJson(url) {
   return value;
 }
 
-function groupLabel(value) {
-  const date = new Date(value);
-  const now = new Date();
-  const dateKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-  const nowKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const yesterdayKey = `${yesterday.getFullYear()}-${yesterday.getMonth()}-${yesterday.getDate()}`;
-  if (dateKey === nowKey) return "Today";
-  if (dateKey === yesterdayKey) return "Yesterday";
-  return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" }).format(date);
-}
-
 function visibleSessions() {
   const needle = state.query.trim().toLowerCase();
   return state.sessions.filter((session) => {
@@ -264,6 +253,7 @@ function renderCompareControls() {
 
 function renderSessions() {
   const sessions = visibleSessions();
+  const projectGroups = groupSessionsByProject(sessions);
   const config = sourceConfig();
   renderCompareControls();
   if (!sessions.length) {
@@ -271,14 +261,13 @@ function renderSessions() {
     return;
   }
 
-  let lastGroup = "";
-  elements.list.innerHTML = sessions
-    .map((session) => {
-      const group = groupLabel(session.updatedAt || session.timestamp);
-      const heading = group !== lastGroup ? `<div class="session-group-label">${escapeHtml(group)}</div>` : "";
-      const compareIndex = state.compareIds.indexOf(session.id);
-      lastGroup = group;
-      return `${heading}
+  elements.list.innerHTML = projectGroups
+    .map((group, groupIndex) => {
+      const collapsed = !state.query.trim() && state.collapsedProjects.has(group.key);
+      const sessionListId = `project-sessions-${groupIndex}`;
+      const sessionEntries = group.sessions.map((session) => {
+        const compareIndex = state.compareIds.indexOf(session.id);
+        return `
         <div class="session-entry">
           <button class="session-card ${session.id === state.selectedId ? "selected" : ""}" data-session-id="${escapeHtml(session.id)}" title="${escapeHtml(session.title)}">
             <div class="session-card-top">
@@ -298,6 +287,18 @@ function renderSessions() {
           </button>
           <button class="compare-toggle ${compareIndex >= 0 ? "selected" : ""}" data-compare-id="${escapeHtml(session.id)}" type="button" aria-pressed="${compareIndex >= 0}" title="${compareIndex >= 0 ? "取消对比选择" : "加入 system prompt 对比"}">${compareIndex >= 0 ? (compareIndex === 0 ? "A" : "B") : "+"}</button>
         </div>`;
+      }).join("");
+      return `<section class="session-project-group">
+        <button class="project-group-toggle" type="button" data-project-toggle="${escapeHtml(group.key)}" aria-expanded="${!collapsed}" aria-controls="${sessionListId}" title="${escapeHtml(group.path)}">
+          <span class="project-group-chevron" aria-hidden="true"></span>
+          <span class="project-group-copy">
+            <strong>${escapeHtml(group.name)}</strong>
+            <span>${escapeHtml(group.path)}</span>
+          </span>
+          <span class="project-group-count">${group.sessions.length}</span>
+        </button>
+        <div id="${sessionListId}" class="project-session-list" ${collapsed ? "hidden" : ""}>${sessionEntries}</div>
+      </section>`;
     })
     .join("");
 }
@@ -641,6 +642,7 @@ async function switchSource(source, { updateHash = true } = {}) {
   state.query = "";
   state.scan = null;
   state.compareIds = [];
+  state.collapsedProjects.clear();
   state.detailCache.clear();
   elements.search.value = "";
   document.querySelectorAll("[data-filter]").forEach((button) => {
@@ -656,6 +658,14 @@ async function switchSource(source, { updateHash = true } = {}) {
 }
 
 elements.list.addEventListener("click", (event) => {
+  const projectToggle = event.target.closest("[data-project-toggle]");
+  if (projectToggle) {
+    const key = projectToggle.dataset.projectToggle;
+    if (state.collapsedProjects.has(key)) state.collapsedProjects.delete(key);
+    else state.collapsedProjects.add(key);
+    renderSessions();
+    return;
+  }
   const compareToggle = event.target.closest("[data-compare-id]");
   if (compareToggle) {
     toggleCompareSession(compareToggle.dataset.compareId);

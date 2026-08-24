@@ -5,15 +5,15 @@ description: Launch the local, read-only Codex Session Viewer when the user asks
 
 # Session Viewer
 
-Open the bundled dashboard rather than manually printing rollout JSONL into the conversation.
+Start the bundled dashboard rather than manually printing rollout JSONL into the conversation.
 
 ## Launch
 
-Resolve the plugin root from this `SKILL.md` location, then run its `scripts/open-viewer.ps1` with PowerShell. The launcher starts a hidden Node.js process on `127.0.0.1`, reuses an existing viewer when available, and opens the default browser.
+Resolve the plugin root from this `SKILL.md` location, then run its `scripts/open-viewer.ps1` with PowerShell. The launcher starts a hidden Node.js process on `127.0.0.1` and reuses an existing viewer when available.
 
-Return the launcher's local URL as a clickable link even if the browser opened successfully. Do not wait on the server process.
+After the launcher returns, give the user its local URL as a clickable Markdown link, for example `[Open Session Viewer](http://127.0.0.1:3847)`. Do not wait on the server process.
 
-If the user asks to avoid opening a browser, pass `-NoBrowser` and only return the URL.
+Do not open the URL automatically, do not navigate the Codex app to it, and do not use an in-app browser or sidebar. Let the user decide when to open the returned link.
 
 ## Boundaries
 

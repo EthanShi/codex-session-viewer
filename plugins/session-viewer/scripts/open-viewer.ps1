@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
-  [int]$Port = 3847,
-  [switch]$NoBrowser
+  [int]$Port = 3847
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,9 +61,6 @@ if (-not $selectedPort) {
 }
 
 $viewerUrl = "http://127.0.0.1:$selectedPort"
-if (-not $NoBrowser) {
-  Start-Process $viewerUrl
-}
 
 [pscustomobject]@{
   url = $viewerUrl

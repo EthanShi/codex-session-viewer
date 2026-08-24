@@ -21,6 +21,7 @@ codex plugin add session-viewer@session-viewer-team
 ```
 
 Restart the ChatGPT desktop app and start a new task, then ask Codex to open Session Viewer.
+Codex starts the local service and replies with a clickable **Open Session Viewer** link; it does not open the dashboard in the Codex sidebar automatically.
 
 ## Update
 

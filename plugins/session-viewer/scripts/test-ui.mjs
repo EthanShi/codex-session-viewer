@@ -20,6 +20,7 @@ const promptAnalysis = await optionalImport("assets/prompt-analysis.mjs");
 const stylesheet = readFileSync(path.join(pluginRoot, "assets", "app.css"), "utf8");
 const icon = readFileSync(path.join(pluginRoot, "assets", "icon.svg"), "utf8");
 const logo = readFileSync(path.join(pluginRoot, "assets", "logo.svg"), "utf8");
+const launcher = readFileSync(path.join(pluginRoot, "scripts", "open-viewer.ps1"), "utf8");
 
 function memoryStorage(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -87,6 +88,11 @@ test("session list and detail pane have independent vertical scrolling", () => {
   assert.match(stylesheet, /\.session-list\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*scroll/is);
   assert.match(stylesheet, /\.workspace\s*\{[^}]*height:\s*100vh[^}]*overflow-y:\s*scroll/is);
   assert.match(stylesheet, /scrollbar-gutter:\s*stable/i);
+});
+
+test("launcher returns the local URL without opening it automatically", () => {
+  assert.match(launcher, /url\s*=\s*\$viewerUrl/i);
+  assert.doesNotMatch(launcher, /Start-Process\s+\$viewerUrl/i);
 });
 
 test("system prompt metrics count Unicode characters and estimate Codex tokens", () => {

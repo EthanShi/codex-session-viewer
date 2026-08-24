@@ -77,9 +77,10 @@ test("tool-result renderer is independently collapsed by default", () => {
   assert.match(html, /Tool output/);
 });
 
-test("theme uses muted solid colors without gradients", () => {
-  assert.match(stylesheet, /--accent:\s*#b58d72/i);
-  assert.doesNotMatch(stylesheet, /gradient\s*\(/i);
+test("theme uses a near-black grid with a restrained coral accent", () => {
+  assert.match(stylesheet, /--bg:\s*#000/i);
+  assert.match(stylesheet, /--accent:\s*#ed765f/i);
+  assert.match(stylesheet, /background-image:[^}]*linear-gradient/is);
   assert.doesNotMatch(icon, /gradient/i);
   assert.doesNotMatch(logo, /gradient/i);
 });

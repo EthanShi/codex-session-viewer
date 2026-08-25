@@ -21,7 +21,7 @@ Team members need access to this GitHub repository and a recent Codex installati
 
 ```powershell
 codex plugin marketplace add EthanShi/codex-session-viewer --ref main
-codex plugin add session-viewer@session-viewer-team
+codex plugin add session-viewer@ethanshi
 ```
 
 Restart the ChatGPT desktop app and start a new task, then ask Codex to open Session Viewer.
@@ -30,8 +30,8 @@ Codex starts the local service and replies with a clickable **Open Session Viewe
 ## Update
 
 ```powershell
-codex plugin marketplace upgrade session-viewer-team
-codex plugin add session-viewer@session-viewer-team
+codex plugin marketplace upgrade ethanshi
+codex plugin add session-viewer@ethanshi
 ```
 
 Restart the desktop app and use a new task after upgrading.

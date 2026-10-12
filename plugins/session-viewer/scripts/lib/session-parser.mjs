@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -20,14 +21,18 @@ function parseLine(line) {
   }
 }
 
-async function* jsonLines(filePath) {
+async function* jsonLines(filePath, { onMalformed, checkCanceled } = {}) {
   const input = createReadStream(filePath, { encoding: "utf8" });
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
-  for await (const line of lines) {
+  let lineNumber = 0;
+  try { for await (const line of lines) {
+    checkCanceled?.();
+    lineNumber += 1;
     if (!line.trim()) continue;
     const value = parseLine(line);
     if (value) yield value;
-  }
+    else if (onMalformed) onMalformed({ filePath, lineNumber, message: `Malformed JSONL record on line ${lineNumber}` });
+  } } finally { lines.close(); input.destroy(); }
 }
 
 async function walkJsonl(directory) {
@@ -50,11 +55,11 @@ async function walkJsonl(directory) {
   return found;
 }
 
-async function readSessionIndex(codexRoot) {
+export async function readSessionIndex(codexRoot, { strict = false, onMalformed } = {}) {
   const names = new Map();
   const indexPath = path.join(codexRoot, "session_index.jsonl");
   try {
-    for await (const item of jsonLines(indexPath)) {
+    for await (const item of jsonLines(indexPath, { onMalformed })) {
       if (item?.id && item?.thread_name) {
         names.set(String(item.id), {
           title: String(item.thread_name),
@@ -62,7 +67,8 @@ async function readSessionIndex(codexRoot) {
         });
       }
     }
-  } catch {
+  } catch (error) {
+    if (strict && error.code !== "ENOENT") throw error;
     // The rollout metadata remains usable when an index is absent or mid-write.
   }
   return names;
@@ -131,7 +137,7 @@ function attachmentLabels(payload) {
   return labels;
 }
 
-async function summarizeFile(filePath, archived, indexNames) {
+export async function summarizeFile(filePath, archived, indexNames, { onRecord, onMalformed, checkCanceled } = {}) {
   const fileStats = await stat(filePath);
   let id = idFromPath(filePath);
   let timestamp = null;
@@ -145,13 +151,21 @@ async function summarizeFile(filePath, archived, indexNames) {
   let turnCount = 0;
   let preview = "";
   const systemPromptTexts = new Set();
+  const systemPromptStats = { systemPromptCharacters: 0, estimatedSystemPromptTokens: 0 };
 
   function captureSystemPrompt(value) {
     const content = String(value || "").trim();
-    if (content) systemPromptTexts.add(content);
+    if (!content) return;
+    const digest = createHash("sha256").update(content).digest("hex");
+    if (systemPromptTexts.has(digest)) return;
+    systemPromptTexts.add(digest);
+    const stats = analyzePromptText(content);
+    systemPromptStats.systemPromptCharacters += stats.characterCount;
+    systemPromptStats.estimatedSystemPromptTokens += stats.estimatedTokens;
   }
 
-  for await (const item of jsonLines(filePath)) {
+  for await (const item of jsonLines(filePath, { onMalformed, checkCanceled })) {
+    if (onRecord) await onRecord(item);
     const payload = item?.payload || {};
     if (item?.type === "session_meta") {
       id = String(payload.id || payload.session_id || id);
@@ -179,15 +193,6 @@ async function summarizeFile(filePath, archived, indexNames) {
   }
 
   const indexed = indexNames.get(id);
-  const systemPromptStats = [...systemPromptTexts].reduce(
-    (total, content) => {
-      const stats = analyzePromptText(content);
-      total.systemPromptCharacters += stats.characterCount;
-      total.estimatedSystemPromptTokens += stats.estimatedTokens;
-      return total;
-    },
-    { systemPromptCharacters: 0, estimatedSystemPromptTokens: 0 },
-  );
   return {
     id,
     title:

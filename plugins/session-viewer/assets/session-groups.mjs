@@ -1,7 +1,7 @@
 const UNKNOWN_PROJECT_KEY = "__unknown-project__";
 
 function timestampOf(session) {
-  const value = new Date(session?.updatedAt || session?.timestamp || 0).getTime();
+  const value = new Date(session?.logModifiedAt || session?.updatedAt || session?.timestamp || 0).getTime();
   return Number.isFinite(value) ? value : 0;
 }
 

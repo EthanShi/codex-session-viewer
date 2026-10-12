@@ -15,6 +15,9 @@ import {
   summarizeDiff,
 } from "./prompt-analysis.mjs";
 import { groupSessionsByProject } from "./session-groups.mjs";
+import { createSearchController, indexReportMessages, sameDateRange, searchResultSessions } from "./search-controller.mjs";
+import { fetchJson } from "./fetch-api.mjs";
+import { recentDateRange, rangeKey } from "./date-range.mjs";
 
 const SOURCES = {
   codex: {
@@ -66,9 +69,13 @@ const SOURCES = {
 const state = {
   source: "codex",
   sessions: [],
+  sessionIds: new Set(),
   selectedId: null,
   filter: "all",
-  query: "",
+  searchState: null,
+  resultCount: 0,
+  catalogLoading: false,
+  catalogError: "",
   scan: null,
   fontScale: 1,
   compareIds: [],
@@ -79,6 +86,8 @@ const state = {
 const copyValues = new Map();
 let copySequence = 0;
 let toastTimer = null;
+let detailSequence = 0;
+let comparisonSequence = 0;
 
 const elements = {
   sourceTabs: [...document.querySelectorAll("[data-source]")],
@@ -86,6 +95,14 @@ const elements = {
   brandSubtitle: document.querySelector("#brand-subtitle"),
   list: document.querySelector("#session-list"),
   search: document.querySelector("#session-search"),
+  searchSubmit: document.querySelector("#search-submit"),
+  rangeFrom: document.querySelector("#range-from"),
+  rangeTo: document.querySelector("#range-to"),
+  rangeShortcuts: [...document.querySelectorAll("[data-range-days]")],
+  rangeError: document.querySelector("#range-error"),
+  rangeApplied: document.querySelector("#range-applied"),
+  searchStatus: document.querySelector("#search-status"),
+  indexProgress: document.querySelector("#index-progress"),
   refresh: document.querySelector("#refresh-button"),
   fontDecrease: document.querySelector("#font-decrease"),
   fontIncrease: document.querySelector("#font-increase"),
@@ -118,13 +135,66 @@ const elements = {
   toast: document.querySelector("#toast"),
 };
 
+const searchController = createSearchController({
+  requestList: (source, range, { refresh, ...options }) => fetchJson(
+    `/api/sources/${encodeURIComponent(source)}/sessions?${new URLSearchParams({ from: range.from, to: range.to, ...(refresh ? { refresh: "1" } : {}) })}`,
+    options,
+  ),
+  requestSearch: (source, query, range, options) => fetchJson(
+    `/api/sources/${encodeURIComponent(source)}/search?${new URLSearchParams({ q: query, from: range.from, to: range.to })}`,
+    options,
+  ),
+  onCatalog(result, { range, previousRange }) {
+    state.searchState = searchController.getState();
+    state.catalogLoading = state.searchState.listLoading;
+    state.catalogError = state.searchState.catalogError;
+    state.sessions = result.sessions || [];
+    state.scan = result;
+    state.detailCache.clear();
+    const visibleIds = new Set(state.sessions.map((session) => session.id));
+    state.sessionIds = visibleIds;
+    state.compareIds = state.compareIds.filter((id) => visibleIds.has(id));
+    if (state.selectedId && !visibleIds.has(state.selectedId)) {
+      state.selectedId = null;
+      elements.detail.classList.add("hidden");
+      elements.empty.classList.remove("hidden");
+      history.replaceState(null, "", sourceHash());
+    }
+    if (state.compareIds.length !== 2 && !elements.compareView.classList.contains("hidden")) closeComparison();
+    if (!sameDateRange(range, previousRange)) {
+      if (!elements.compareView.classList.contains("hidden") && state.compareIds.length === 2) void openComparison({ updateHash: false });
+      else if (state.selectedId) void selectSession(state.selectedId, { updateHash: false });
+    }
+    renderSessions();
+    const messages = indexReportMessages(result, "list");
+    if (messages.length) showToast(messages.join(" · "));
+  },
+  onChange(search) {
+    const previous = state.searchState;
+    state.searchState = search;
+    state.catalogLoading = search.listLoading;
+    state.catalogError = search.catalogError;
+    elements.refresh.classList.toggle("spinning", search.listLoading);
+    if (!previous || previous.phase !== search.phase || previous.matches !== search.matches
+      || previous.submittedQuery !== search.submittedQuery || previous.displayLimit !== search.displayLimit
+      || previous.listLoading !== search.listLoading || previous.catalogError !== search.catalogError
+      || previous.stage !== search.stage) {
+      renderSessions();
+    } else {
+      renderSearchControls();
+    }
+  },
+});
+state.searchState = searchController.getState();
+
 function sourceConfig() {
   return SOURCES[state.source];
 }
 
 function sessionsApiPath(id = "") {
   const base = `/api/sources/${encodeURIComponent(state.source)}/sessions`;
-  return id ? `${base}/${encodeURIComponent(id)}` : base;
+  const range = state.searchState.appliedRange;
+  return `${id ? `${base}/${encodeURIComponent(id)}` : base}?${new URLSearchParams({ from: range.from, to: range.to })}`;
 }
 
 function sourceHash(parameters = {}) {
@@ -192,6 +262,7 @@ function formatDate(value, options = {}) {
 }
 
 function relativeTime(value) {
+  if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
   const delta = Date.now() - date.getTime();
@@ -220,23 +291,76 @@ function formatCount(value) {
   return new Intl.NumberFormat("zh-CN").format(Number(value) || 0);
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { cache: "no-store" });
-  const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(value.error || `Request failed (${response.status})`);
-  return value;
+function renderSearchControls() {
+  const search = state.searchState;
+  const status = search.status;
+  const working = state.catalogLoading || search.phase === "loading";
+  const bodyIndexing = search.stage === "body";
+  const draftChanged = !sameDateRange(search.draftRange, search.appliedRange);
+  const parts = [];
+  elements.rangeFrom.value = search.draftRange.from || "";
+  elements.rangeTo.value = search.draftRange.to || "";
+  elements.rangeError.textContent = search.rangeError;
+  elements.rangeError.classList.toggle("hidden", !search.rangeError);
+  elements.rangeApplied.textContent = `已应用：${search.appliedRange.from} 至 ${search.appliedRange.to}`;
+  elements.rangeShortcuts.forEach((button) => {
+    const shortcut = recentDateRange(Number(button.dataset.rangeDays), { timeZone: search.appliedRange.timeZone });
+    const active = sameDateRange(search.draftRange, shortcut);
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  elements.searchSubmit.disabled = Boolean(search.rangeError);
+  elements.searchSubmit.textContent = search.draft.trim() ? "全文搜索" : "应用时间段";
+  elements.searchStatus.classList.toggle("error", search.phase === "error" || Boolean(state.catalogError));
+  if (search.submittedQuery) {
+    parts.push(`“${search.submittedQuery}” · ${search.submittedRange.from} 至 ${search.submittedRange.to}`);
+    if (search.phase === "loading") parts.push(search.stage === "summary" ? "正在读取所选时间段摘要…" : "正在全文搜索…");
+    else if (search.phase === "error") parts.push(`搜索失败：${search.error}`);
+    else {
+      parts.push(`${formatCount(state.resultCount)} 个匹配 session`);
+      const unavailable = search.matches.filter((match) => !state.sessionIds.has(match.id)).length;
+      if (unavailable) parts.push(state.catalogLoading
+        ? `正在读取 ${unavailable} 个命中 session 的摘要…`
+        : `${unavailable} 个命中 session 的摘要无法读取，显示结果不完整`);
+      parts.push(...indexReportMessages(search, "search"));
+      if (search.stale) parts.push("日志已更新，点击全文搜索更新结果");
+    }
+    if (search.draft.trim() !== search.submittedQuery || !sameDateRange(search.draftRange, search.submittedRange)) parts.push("输入或时间段已修改，点击全文搜索后生效");
+  } else if (search.draft.trim()) {
+    parts.push("点击全文搜索后查询所选时间段的完整日志");
+  }
+  if (draftChanged && !search.submittedQuery) parts.push("时间段尚未应用");
+  if (search.phase !== "complete") parts.push(...indexReportMessages(state.scan, "list"));
+  if (working && status && bodyIndexing && status.phase === "indexing") {
+    parts.push(`正在建立全文索引：${formatCount(status.indexedFiles)} / ${formatCount(status.totalFiles)} 个文件`);
+  } else if (state.catalogLoading || (bodyIndexing && status?.phase === "summarizing")) {
+    parts.push(status && Number(status.totalFiles) > 0
+      ? `正在读取时间段摘要：${formatCount(status.indexedFiles)} / ${formatCount(status.totalFiles)} 个文件`
+      : "正在读取时间段摘要…");
+  } else if (bodyIndexing && status?.phase === "scanning") {
+    parts.push("正在扫描所选时间段的日志…");
+  }
+  if (state.catalogError) parts.push(search.applyError
+    ? `时间段未应用，保留此前${search.submittedQuery ? "搜索结果" : "列表"}；摘要读取失败：${state.catalogError}；点击${search.draft.trim() ? "全文搜索" : "应用时间段"}重试`
+    : `读取 session 列表失败：${state.catalogError}`);
+  elements.searchStatus.textContent = parts.join(" · ");
+  elements.searchStatus.classList.toggle("hidden", !parts.length);
+  const showProgress = working && status && Number(status.totalFiles) > 0;
+  elements.indexProgress.classList.toggle("hidden", !showProgress);
+  elements.indexProgress.setAttribute("aria-label", bodyIndexing && status?.phase !== "summarizing" ? "全文索引进度" : "时间段摘要读取进度");
+  if (showProgress) {
+    elements.indexProgress.max = Math.max(1, Number(status.totalFiles));
+    elements.indexProgress.value = Math.max(0, Number(status.indexedFiles) || 0);
+  }
 }
 
-function visibleSessions() {
-  const needle = state.query.trim().toLowerCase();
-  return state.sessions.filter((session) => {
-    if (state.filter === "active" && session.archived) return false;
-    if (state.filter === "archived" && !session.archived) return false;
-    if (!needle) return true;
-    return [session.title, session.id, session.cwd, session.model, session.preview]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(needle));
-  });
+function searchKindLabel(kind) {
+  return {
+    metadata: "会话信息", system: "System prompt", prompt: "System prompt", "system-prompt": "System prompt",
+    context: "Context", query: "Query", user: "Query", assistant: "回答", thinking: "Thinking", reasoning: "Thinking",
+    tool: "工具调用",
+    "tool-name": "工具名称", "tool-input": "工具输入", "tool-output": "工具输出",
+  }[kind] || String(kind || "正文");
 }
 
 function renderCompareControls() {
@@ -252,38 +376,55 @@ function renderCompareControls() {
 }
 
 function renderSessions() {
-  const sessions = visibleSessions();
+  const search = state.searchState;
+  const result = searchResultSessions(state.sessions, search, state.filter, search.displayLimit);
+  const sessions = result.sessions;
+  state.resultCount = result.total;
   const projectGroups = groupSessionsByProject(sessions);
   const config = sourceConfig();
   renderCompareControls();
+  renderSearchControls();
+  if (search.phase === "loading") {
+    elements.list.innerHTML = `<div class="list-message">${search.stage === "summary" ? "正在读取所选时间段摘要…" : "正在全文搜索…"}</div>`;
+    return;
+  }
+  if (search.phase === "error") {
+    elements.list.innerHTML = `<div class="list-message error">${escapeHtml(search.error)}<br>点击全文搜索重试</div>`;
+    return;
+  }
   if (!sessions.length) {
-    elements.list.innerHTML = `<div class="list-message">${state.sessions.length ? "没有匹配的 session" : config.noSessions}</div>`;
+    const message = search.submittedQuery
+      ? (!search.complete ? "当前可读取内容中没有匹配的 session；部分文件未能搜索" : "没有匹配的 session")
+      : state.catalogLoading ? "正在读取所选时间段的 session…" : state.catalogError || "所选时间段没有 session";
+    elements.list.innerHTML = `<div class="list-message ${state.catalogError ? "error" : ""}">${escapeHtml(message)}</div>`;
     return;
   }
 
   elements.list.innerHTML = projectGroups
     .map((group, groupIndex) => {
-      const collapsed = !state.query.trim() && state.collapsedProjects.has(group.key);
+      const collapsed = !search.submittedQuery && state.collapsedProjects.has(group.key);
       const sessionListId = `project-sessions-${groupIndex}`;
       const sessionEntries = group.sessions.map((session) => {
         const compareIndex = state.compareIds.indexOf(session.id);
+        const match = result.matches.get(session.id);
         return `
         <div class="session-entry">
           <button class="session-card ${session.id === state.selectedId ? "selected" : ""}" data-session-id="${escapeHtml(session.id)}" title="${escapeHtml(session.title)}">
             <div class="session-card-top">
               <span class="mini-state ${session.archived ? "archived" : ""}"></span>
               <span class="session-card-title">${escapeHtml(session.title)}</span>
-              <span class="session-card-time">${escapeHtml(relativeTime(session.updatedAt || session.timestamp))}</span>
+              <span class="session-card-time" title="${escapeHtml(formatDate(session.logModifiedAt))}">日志更新 ${escapeHtml(relativeTime(session.logModifiedAt))}</span>
             </div>
             <div class="session-card-meta">
-              <span>${session.turnCount} turn${session.turnCount === 1 ? "" : "s"}</span>
+              ${Number.isFinite(session.turnCount) ? `<span>${session.turnCount} turn${session.turnCount === 1 ? "" : "s"}</span>` : ""}
               <span>${escapeHtml(formatBytes(session.size))}</span>
               <span>${escapeHtml(session.model || session.originator || config.fallbackModel)}</span>
             </div>
-            <div class="session-card-prompt-stats" title="${escapeHtml(config.promptMetricTitle)}">
+            ${Number.isFinite(session.systemPromptCharacters) && Number.isFinite(session.estimatedSystemPromptTokens) ? `<div class="session-card-prompt-stats" title="${escapeHtml(config.promptMetricTitle)}">
               <span>${formatCount(session.systemPromptCharacters)} 字符</span>
               <span>≈ ${formatCount(session.estimatedSystemPromptTokens)} tokens</span>
-            </div>
+            </div>` : ""}
+            ${match ? `<div class="session-match"><span class="session-match-kind">${escapeHtml(searchKindLabel(match.kind))}</span><span class="session-match-snippet">${escapeHtml(match.snippet)}</span></div>` : ""}
           </button>
           <button class="compare-toggle ${compareIndex >= 0 ? "selected" : ""}" data-compare-id="${escapeHtml(session.id)}" type="button" aria-pressed="${compareIndex >= 0}" title="${compareIndex >= 0 ? "取消对比选择" : "加入 system prompt 对比"}">${compareIndex >= 0 ? (compareIndex === 0 ? "A" : "B") : "+"}</button>
         </div>`;
@@ -300,7 +441,9 @@ function renderSessions() {
         <div id="${sessionListId}" class="project-session-list" ${collapsed ? "hidden" : ""}>${sessionEntries}</div>
       </section>`;
     })
-    .join("");
+    .join("") + (search.submittedQuery && result.total > sessions.length
+      ? `<button class="search-load-more" type="button" data-search-more>加载更多（已显示 ${sessions.length} / ${result.total}）</button>`
+      : "");
 }
 
 function statCard(value, label) {
@@ -489,20 +632,20 @@ function renderComparison(leftData, rightData) {
 }
 
 async function loadSessionDetail(id) {
-  if (!state.detailCache.has(id)) {
-    state.detailCache.set(
-      id,
-      fetchJson(sessionsApiPath(id)).catch((error) => {
-        state.detailCache.delete(id);
-        throw error;
-      }),
-    );
+  const key = `${state.source}:${rangeKey(state.searchState.appliedRange)}:${id}`;
+  if (!state.detailCache.has(key)) {
+    const request = fetchJson(sessionsApiPath(id)).catch((error) => {
+      if (state.detailCache.get(key) === request) state.detailCache.delete(key);
+      throw error;
+    });
+    state.detailCache.set(key, request);
   }
-  return state.detailCache.get(id);
+  return state.detailCache.get(key);
 }
 
 async function openComparison({ updateHash = true } = {}) {
   if (state.compareIds.length !== 2) return;
+  const sequence = ++comparisonSequence;
   elements.compareButton.disabled = true;
   elements.compareButton.textContent = "正在比较…";
   elements.empty.classList.add("hidden");
@@ -511,11 +654,14 @@ async function openComparison({ updateHash = true } = {}) {
   elements.compareDiff.innerHTML = '<div class="list-message">正在读取两个 session…</div>';
   if (updateHash) history.replaceState(null, "", sourceHash({ compare: state.compareIds }));
   const source = state.source;
+  const range = rangeKey(state.searchState.appliedRange);
+  const selection = state.compareIds.join(",");
   try {
     const [leftData, rightData] = await Promise.all(state.compareIds.map(loadSessionDetail));
-    if (source !== state.source) return;
+    if (sequence !== comparisonSequence || source !== state.source || range !== rangeKey(state.searchState.appliedRange) || selection !== state.compareIds.join(",")) return;
     renderComparison(leftData, rightData);
   } catch (error) {
+    if (sequence !== comparisonSequence || source !== state.source || range !== rangeKey(state.searchState.appliedRange) || selection !== state.compareIds.join(",")) return;
     elements.compareDiff.innerHTML = `<div class="list-message error">${escapeHtml(error.message)}</div>`;
   } finally {
     elements.compareButton.textContent = "开始比较";
@@ -524,6 +670,7 @@ async function openComparison({ updateHash = true } = {}) {
 }
 
 function closeComparison() {
+  comparisonSequence += 1;
   elements.compareView.classList.add("hidden");
   if (state.selectedId) {
     elements.detail.classList.remove("hidden");
@@ -584,32 +731,17 @@ function showToast(message) {
   toastTimer = setTimeout(() => elements.toast.classList.remove("show"), 1400);
 }
 
-async function loadSessions({ preserveSelection = true } = {}) {
-  const source = state.source;
-  const config = sourceConfig();
-  elements.refresh.classList.add("spinning");
-  if (!state.sessions.length) elements.list.innerHTML = `<div class="list-message">${escapeHtml(config.scanning)}</div>`;
-  try {
-    const result = await fetchJson(sessionsApiPath());
-    if (source !== state.source) return;
-    state.sessions = result.sessions || [];
-    state.detailCache.clear();
-    state.compareIds = state.compareIds.filter((id) => state.sessions.some((session) => session.id === id));
-    state.scan = result;
-    if (!preserveSelection) state.selectedId = null;
-    renderSessions();
-    if (result.errors?.length) showToast(`已扫描，${result.errors.length} 个文件无法读取`);
-  } catch (error) {
-    if (source !== state.source) return;
-    elements.list.innerHTML = `<div class="list-message error">${escapeHtml(error.message)}</div>`;
-  } finally {
-    if (source === state.source) elements.refresh.classList.remove("spinning");
-  }
+async function loadSessions({ preserveSelection = true, refresh = false } = {}) {
+  if (!preserveSelection) state.selectedId = null;
+  await searchController.loadList({ refresh });
 }
 
 async function selectSession(id, { updateHash = true } = {}) {
   if (!id) return;
+  const sequence = ++detailSequence;
+  comparisonSequence += 1;
   const source = state.source;
+  const range = rangeKey(state.searchState.appliedRange);
   const config = sourceConfig();
   state.selectedId = id;
   renderSessions();
@@ -625,10 +757,10 @@ async function selectSession(id, { updateHash = true } = {}) {
   if (updateHash) history.replaceState(null, "", sourceHash({ session: id }));
   try {
     const detail = await loadSessionDetail(id);
-    if (source !== state.source || state.selectedId !== id) return;
+    if (sequence !== detailSequence || source !== state.source || state.selectedId !== id || range !== rangeKey(state.searchState.appliedRange)) return;
     renderDetail(detail);
   } catch (error) {
-    if (source !== state.source || state.selectedId !== id) return;
+    if (sequence !== detailSequence || source !== state.source || state.selectedId !== id || range !== rangeKey(state.searchState.appliedRange)) return;
     elements.systemPrompts.innerHTML = `<div class="list-message error">${escapeHtml(error.message)}</div>`;
   }
 }
@@ -637,14 +769,17 @@ async function switchSource(source, { updateHash = true } = {}) {
   if (!SOURCES[source] || source === state.source) return;
   state.source = source;
   state.sessions = [];
+  state.sessionIds = new Set();
   state.selectedId = null;
   state.filter = "all";
-  state.query = "";
+  state.catalogLoading = false;
+  state.catalogError = "";
   state.scan = null;
   state.compareIds = [];
   state.collapsedProjects.clear();
   state.detailCache.clear();
   elements.search.value = "";
+  searchController.reset(source);
   document.querySelectorAll("[data-filter]").forEach((button) => {
     button.classList.toggle("active", button.dataset.filter === "all");
   });
@@ -658,6 +793,10 @@ async function switchSource(source, { updateHash = true } = {}) {
 }
 
 elements.list.addEventListener("click", (event) => {
+  if (event.target.closest("[data-search-more]")) {
+    searchController.loadMore();
+    return;
+  }
   const projectToggle = event.target.closest("[data-project-toggle]");
   if (projectToggle) {
     const key = projectToggle.dataset.projectToggle;
@@ -689,9 +828,18 @@ elements.sourceTabs.forEach((tab) => {
 });
 
 elements.search.addEventListener("input", () => {
-  state.query = elements.search.value;
-  renderSessions();
+  searchController.setDraft(elements.search.value);
 });
+elements.searchSubmit.addEventListener("click", () => searchController.submit());
+
+elements.rangeShortcuts.forEach((button) => {
+  button.addEventListener("click", () => searchController.setRange(recentDateRange(
+    Number(button.dataset.rangeDays), { timeZone: state.searchState.appliedRange.timeZone },
+  )));
+});
+for (const input of [elements.rangeFrom, elements.rangeTo]) {
+  input.addEventListener("change", () => searchController.setRange({ from: elements.rangeFrom.value, to: elements.rangeTo.value }));
+}
 
 document.querySelectorAll("[data-filter]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -702,7 +850,7 @@ document.querySelectorAll("[data-filter]").forEach((button) => {
   });
 });
 
-elements.refresh.addEventListener("click", () => loadSessions());
+elements.refresh.addEventListener("click", () => loadSessions({ refresh: true }));
 
 elements.fontDecrease.addEventListener("click", () => {
   applyFontScale(adjustFontScale(state.fontScale, -1), { persist: true });
@@ -745,6 +893,10 @@ document.addEventListener("keydown", (event) => {
 const hashParameters = new URLSearchParams(location.hash.slice(1));
 const hashSource = hashParameters.get("source");
 if (SOURCES[hashSource]) state.source = hashSource;
+searchController.reset(state.source);
+const today = recentDateRange(1).to;
+elements.rangeFrom.max = today;
+elements.rangeTo.max = today;
 updateSourceChrome();
 applyFontScale(loadFontScale(localStorage));
 await loadSessions();

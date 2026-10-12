@@ -1,6 +1,6 @@
 {
   "name": "session-viewer",
-  "version": "0.1.0+codex.20260824083337",
+  "version": "0.3.0",
   "description": "Scan, inspect, and compare local Codex or Claude Code sessions in a private, read-only browser dashboard.",
   "author": {
     "name": "EthanShi",
@@ -21,7 +21,7 @@
   "interface": {
     "displayName": "Session Viewer",
     "shortDescription": "Inspect Codex and Claude Code sessions",
-    "longDescription": "Launches a local-only, read-only dashboard with separate Codex and Claude Code sources. It reports persisted prompt or context metrics, compares two sessions from the selected source, and presents each turn as query, thinking, tool calls, and tool results.",
+    "longDescription": "Launches a local-only, read-only dashboard with separate Codex and Claude Code sources. Browse the latest week or choose up to 30 days by log modification time. Search all readable content of matching sessions with a reusable SQLite index built only when you click Search. Requires Node.js 22.13+.",
     "developerName": "EthanShi",
     "category": "Developer Tools",
     "capabilities": [

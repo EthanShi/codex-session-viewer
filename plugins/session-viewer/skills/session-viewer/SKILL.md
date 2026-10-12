@@ -11,6 +11,8 @@ Start the bundled dashboard rather than manually printing local session JSONL in
 
 Resolve the plugin root from this `SKILL.md` location, then run its `scripts/open-viewer.ps1` with PowerShell. The launcher starts a hidden Node.js process on `127.0.0.1` and reuses an existing viewer when available.
 
+The viewer requires Node.js 22.13+ with built-in SQLite FTS5 support. The launcher validates the runtime and only reuses a server that supports date-scoped full-text search. Its derived SQLite index is separate from the read-only session stores. The default list covers the latest seven local calendar days by log modification time; users may select up to 30 days. Opening the list does not build a full-text index. Searches are submitted by the dashboard's Search button; editing keywords or dates alone does not run a search. Selected logs are searched in full, including older messages.
+
 After the launcher returns, give the user its local URL as a clickable Markdown link, for example `[Open Session Viewer](http://127.0.0.1:3847)`. Do not wait on the server process.
 
 Do not open the URL automatically, do not navigate the Codex app to it, and do not use an in-app browser or sidebar. Let the user decide when to open the returned link.

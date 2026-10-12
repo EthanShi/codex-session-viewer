@@ -31,11 +31,29 @@
         </div>
 
         <div class="sidebar-tools">
-          <label class="search-box">
-            <span aria-hidden="true">⌕</span>
-            <input id="session-search" type="search" placeholder="搜索 session…" autocomplete="off" />
-            <kbd>/</kbd>
-          </label>
+          <div class="range-controls">
+            <div class="range-shortcuts" role="group" aria-label="时间段快捷选择">
+              <button data-range-days="7" type="button" aria-pressed="true" class="active">最近一周</button>
+              <button data-range-days="30" type="button" aria-pressed="false">最近一月（30天）</button>
+            </div>
+            <div class="range-dates">
+              <label>开始日期<input id="range-from" type="date" aria-describedby="range-help range-error" required /></label>
+              <label>结束日期<input id="range-to" type="date" aria-describedby="range-help range-error" required /></label>
+            </div>
+            <p id="range-help" class="range-help">按日志最后写入时间筛选，含首尾日期，最多 30 个自然日。</p>
+            <p id="range-applied" class="range-help"></p>
+            <p id="range-error" class="range-error hidden" role="alert"></p>
+          </div>
+          <div class="search-controls">
+            <label class="search-box">
+              <span aria-hidden="true">⌕</span>
+              <input id="session-search" type="search" placeholder="全文搜索…" aria-label="全文搜索 session 日志" autocomplete="off" />
+              <kbd>/</kbd>
+            </label>
+            <button id="search-submit" class="search-submit" type="button">应用时间段</button>
+          </div>
+          <p id="search-status" class="search-status hidden" role="status" aria-live="polite"></p>
+          <progress id="index-progress" class="index-progress hidden" aria-label="全文索引进度" max="1" value="0"></progress>
           <div class="filter-row" role="group" aria-label="Session status">
             <button class="filter active" data-filter="all" type="button">全部</button>
             <button class="filter source-archive-filter" data-filter="active" type="button">活跃</button>

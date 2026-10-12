@@ -7,8 +7,11 @@ $ErrorActionPreference = 'Stop'
 $serverPath = Join-Path $PSScriptRoot 'server.mjs'
 $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
 if (-not $nodeCommand) {
-  throw 'Node.js 18 or newer is required to run Session Viewer.'
+  throw 'Node.js 22.13 or newer is required to run Session Viewer.'
 }
+$runtimeCheck = Join-Path $PSScriptRoot 'check-runtime.mjs'
+& $nodeCommand.Source $runtimeCheck
+if ($LASTEXITCODE -ne 0) { throw 'Session Viewer requires Node.js 22.13+ with built-in SQLite FTS5 support.' }
 
 function Get-ViewerHealth([int]$CandidatePort) {
   try {
@@ -22,19 +25,23 @@ function Get-ViewerHealth([int]$CandidatePort) {
 
 $selectedPort = $null
 $viewerProcess = $null
+$launchId = [guid]::NewGuid().ToString('N')
 $candidatePorts = $Port..($Port + 10)
 
 foreach ($candidatePort in $candidatePorts) {
   $health = Get-ViewerHealth $candidatePort
   if ($health) {
-    $selectedPort = $candidatePort
-    break
+    if ($health.searchVersion -eq 2 -and $health.rangeSearch -eq $true) {
+      $selectedPort = $candidatePort
+      break
+    }
+    continue
   }
 
   $logRoot = Join-Path $env:TEMP 'codex-session-viewer'
   New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
-  $stdoutPath = Join-Path $logRoot "viewer-$candidatePort.stdout.log"
-  $stderrPath = Join-Path $logRoot "viewer-$candidatePort.stderr.log"
+  $stdoutPath = Join-Path $logRoot "viewer-$candidatePort-$launchId.stdout.log"
+  $stderrPath = Join-Path $logRoot "viewer-$candidatePort-$launchId.stderr.log"
   $viewerProcess = Start-Process `
     -FilePath $nodeCommand.Source `
     -ArgumentList @("`"$serverPath`"", '--port', "$candidatePort") `
@@ -47,7 +54,7 @@ foreach ($candidatePort in $candidatePorts) {
   for ($attempt = 0; $attempt -lt 40; $attempt++) {
     Start-Sleep -Milliseconds 100
     $health = Get-ViewerHealth $candidatePort
-    if ($health) {
+    if ($health -and $health.searchVersion -eq 2 -and $health.rangeSearch -eq $true) {
       $selectedPort = $candidatePort
       break
     }

@@ -109,17 +109,18 @@ test("Codex and Claude Code are separate selectable session sources", () => {
   assert.match(application, /\/api\/sources\/\$\{encodeURIComponent\(state\.source\)\}\/sessions/);
   assert.match(application, /state\.detailCache\.clear\(\)/);
   assert.match(application, /state\.compareIds\s*=\s*\[\]/);
-  assert.match(server, /listClaudeSessions/);
+  assert.match(server, /claude:\s*\{\s*root:/);
+  assert.match(server, /getClaudeRoot\(\)/);
   assert.doesNotMatch(application, /fetchJson\("\/api\/sessions"\)/);
 });
 
-test("sessions are grouped by normalized project path and ordered by recent activity", () => {
+test("sessions are grouped by normalized project path and ordered by log modification time", () => {
   assert.equal(typeof sessionGroups?.groupSessionsByProject, "function", "session grouping should be implemented");
   const groups = sessionGroups.groupSessionsByProject([
-    { id: "alpha-old", cwd: "D:\\work\\alpha", updatedAt: "2026-08-22T10:00:00Z" },
-    { id: "unknown", cwd: null, updatedAt: "2026-08-21T10:00:00Z" },
-    { id: "beta", cwd: "/work/beta", updatedAt: "2026-08-24T10:00:00Z" },
-    { id: "alpha-new", cwd: "d:/work/alpha/", updatedAt: "2026-08-23T10:00:00Z" },
+    { id: "alpha-old", cwd: "D:\\work\\alpha", logModifiedAt: "2026-08-22T10:00:00Z", updatedAt: "2026-08-25T10:00:00Z" },
+    { id: "unknown", cwd: null, logModifiedAt: "2026-08-21T10:00:00Z", updatedAt: "2026-08-30T10:00:00Z" },
+    { id: "beta", cwd: "/work/beta", logModifiedAt: "2026-08-24T10:00:00Z", updatedAt: "2026-08-20T10:00:00Z" },
+    { id: "alpha-new", cwd: "d:/work/alpha/", logModifiedAt: "2026-08-23T10:00:00Z", updatedAt: "2026-08-21T10:00:00Z" },
   ]);
   assert.deepEqual(groups.map((group) => group.name), ["beta", "alpha", "未知项目"]);
   assert.deepEqual(groups[1].sessions.map((session) => session.id), ["alpha-new", "alpha-old"]);
@@ -132,6 +133,50 @@ test("project groups expose independent accessible collapse controls", () => {
   assert.match(application, /aria-expanded=/);
   assert.match(application, /state\.collapsedProjects\.has\(group\.key\)/);
   assert.match(stylesheet, /\.project-session-list\[hidden\]\s*\{\s*display:\s*none/is);
+});
+
+test("full-text search is manually submitted and renders bounded escaped snippets", () => {
+  assert.match(documentHtml, /id="search-submit"[^>]*type="button"/);
+  assert.match(documentHtml, /id="search-status"[^>]*role="status"/);
+  assert.match(documentHtml, /id="index-progress"/);
+  assert.match(application, /searchSubmit\.addEventListener\("click",\s*\(\)\s*=>\s*searchController\.submit\(\)/);
+  const inputHandler = application.match(/elements\.search\.addEventListener\("input",[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(inputHandler, /searchController\.setDraft\(elements\.search\.value\)/);
+  assert.doesNotMatch(inputHandler, /submit|fetchJson|renderSessions/);
+  assert.match(application, /escapeHtml\(match\.snippet\)/);
+  assert.match(application, /data-search-more/);
+  assert.match(application, /loadSessions\(\{ refresh: true \}\)/);
+  assert.doesNotMatch(application, /session\.preview\]/);
+});
+
+test("date controls show the mtime scope, thirty-day limit and separate applied range", () => {
+  assert.match(documentHtml, /data-range-days="7"[^>]*[\s\S]*?最近一周/);
+  assert.match(documentHtml, /data-range-days="30"[^>]*[\s\S]*?最近一月/);
+  assert.match(documentHtml, /id="range-from"[^>]*type="date"/);
+  assert.match(documentHtml, /id="range-to"[^>]*type="date"/);
+  assert.match(documentHtml, /日志最后写入时间[\s\S]*30 个自然日/);
+  assert.match(documentHtml, /id="range-applied"/);
+  assert.match(documentHtml, /id="range-error"[^>]*role="alert"/);
+  assert.match(application, /search\.draft\.trim\(\) \? "全文搜索" : "应用时间段"/);
+  assert.match(application, /from: range\.from, to: range\.to/);
+  assert.doesNotMatch(application, /requestStatus:|watchStatus\(/);
+});
+
+test("summary cards label file modification time and omit uncomputed prompt metrics", () => {
+  assert.match(application, /日志更新 \$\{escapeHtml\(relativeTime\(session\.logModifiedAt\)\)\}/);
+  assert.match(application, /Number\.isFinite\(session\.systemPromptCharacters\) && Number\.isFinite\(session\.estimatedSystemPromptTokens\)/);
+  assert.match(application, /Number\.isFinite\(session\.turnCount\)/);
+  assert.match(application, /命中 session 的摘要无法读取，显示结果不完整/);
+});
+
+test("partial catalog warnings persist in the status area after the scan toast disappears", () => {
+  const controls = application.match(/function renderSearchControls\(\) \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(controls, /indexReportMessages\(state\.scan, "list"\)/);
+  assert.match(controls, /indexReportMessages\(search, "search"\)/);
+  assert.match(controls, /searchStatus\.textContent = parts\.join/);
+  assert.match(controls, /search\.applyError[\s\S]*时间段未应用，保留此前/);
+  assert.match(controls, /摘要读取失败[\s\S]*重试/);
+  assert.doesNotMatch(application, /search\.errors\.length\} 个文件|result\.errors\.length\} 个文件/);
 });
 
 test("system prompt metrics count Unicode characters and estimate Codex tokens", () => {

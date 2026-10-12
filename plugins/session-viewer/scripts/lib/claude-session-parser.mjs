@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -18,14 +19,18 @@ function parseLine(line) {
   }
 }
 
-async function* jsonLines(filePath) {
+async function* jsonLines(filePath, { onMalformed, checkCanceled } = {}) {
   const input = createReadStream(filePath, { encoding: "utf8" });
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
-  for await (const line of lines) {
+  let lineNumber = 0;
+  try { for await (const line of lines) {
+    checkCanceled?.();
+    lineNumber += 1;
     if (!line.trim()) continue;
     const value = parseLine(line);
     if (value) yield value;
-  }
+    else if (onMalformed) onMalformed({ filePath, lineNumber, message: `Malformed JSONL record on line ${lineNumber}` });
+  } } finally { lines.close(); input.destroy(); }
 }
 
 async function listProjectSessionFiles(claudeRoot) {
@@ -122,7 +127,7 @@ function updateTimestamp(current, candidate, comparison) {
   return comparison(new Date(candidate).getTime(), new Date(current).getTime()) ? candidate : current;
 }
 
-async function summarizeFile(filePath) {
+export async function summarizeFile(filePath, { onRecord, onMalformed, checkCanceled } = {}) {
   const fileStats = await stat(filePath);
   let id = idFromPath(filePath);
   let title = "";
@@ -138,8 +143,10 @@ async function summarizeFile(filePath) {
   let entrypoint = null;
   let turnCount = 0;
   const contextTexts = new Set();
+  const contextStats = { systemPromptCharacters: 0, estimatedSystemPromptTokens: 0 };
 
-  for await (const item of jsonLines(filePath)) {
+  for await (const item of jsonLines(filePath, { onMalformed, checkCanceled })) {
+    if (onRecord) await onRecord(item);
     id = String(item.sessionId || id);
     timestamp = updateTimestamp(timestamp, item.timestamp, (left, right) => left < right);
     updatedAt = updateTimestamp(updatedAt, item.timestamp, (left, right) => left > right);
@@ -154,7 +161,15 @@ async function summarizeFile(filePath) {
     if (item.type === "assistant") model = item.message?.model || model;
     if (item.type === "user" && item.isMeta && !item.isSidechain) {
       const context = textFromContent(item.message?.content).trim();
-      if (context) contextTexts.add(context);
+      if (context) {
+        const digest = createHash("sha256").update(context).digest("hex");
+        if (!contextTexts.has(digest)) {
+          contextTexts.add(digest);
+          const stats = analyzePromptText(context);
+          contextStats.systemPromptCharacters += stats.characterCount;
+          contextStats.estimatedSystemPromptTokens += stats.estimatedTokens;
+        }
+      }
     }
     if (isHumanQuery(item)) {
       const query = textFromContent(item.message?.content).trim();
@@ -163,15 +178,6 @@ async function summarizeFile(filePath) {
     }
   }
 
-  const contextStats = [...contextTexts].reduce(
-    (total, content) => {
-      const stats = analyzePromptText(content);
-      total.systemPromptCharacters += stats.characterCount;
-      total.estimatedSystemPromptTokens += stats.estimatedTokens;
-      return total;
-    },
-    { systemPromptCharacters: 0, estimatedSystemPromptTokens: 0 },
-  );
 
   return {
     id,

@@ -264,8 +264,8 @@ try {
   await refresh();
   await service.close();
   service = null;
-  const interruptionRecord = jsonl([message(`${"z".repeat(1200)}interrupted-rebuild-marker`, "assistant")]);
-  await appendFile(recoveryFile, interruptionRecord.repeat(20000) + jsonl([message("large-file-tail-marker", "assistant")]));
+  const interruptionRecords = jsonl(Array.from({ length: 20000 }, (_, i) => message(`${"z".repeat(1200)}interrupted-rebuild-marker-${i}`, "assistant")));
+  await appendFile(recoveryFile, interruptionRecords + jsonl([message("large-file-tail-marker", "assistant")]));
   await interruptBuild();
   assert.ok((await readdir(path.join(fixtureRoot, "cache"))).some((file) => file.endsWith(".sqlite.lock")), "abrupt termination leaves a dead-process lease to recover");
   service = createSearchService(config(fixtureRoot));

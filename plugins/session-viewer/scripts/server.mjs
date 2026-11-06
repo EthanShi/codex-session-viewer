@@ -11,6 +11,7 @@ import { closeDetailReaders, readSessionDetail } from "./lib/detail-reader.mjs";
 import { assertSupportedRuntime } from "./lib/runtime.mjs";
 import { createHttpOperations } from "./lib/http-operations.mjs";
 import { normalizeDateRange } from "../assets/date-range.mjs";
+import { CODEX_PARSER_VERSION } from "./lib/codex-events.mjs";
 
 await assertSupportedRuntime();
 
@@ -75,7 +76,7 @@ async function requestHandler(request, response) {
   }
   const url = new URL(request.url || "/", `http://${host}`);
   if (url.pathname === "/api/health") {
-    sendJson(response, 200, { ok: true, searchVersion: 2, rangeSearch: true, maxRangeDays: 30, memoryRssBytes: process.memoryUsage().rss, sources });
+    sendJson(response, 200, { ok: true, searchVersion: 2, codexParserVersion: CODEX_PARSER_VERSION, rangeSearch: true, maxRangeDays: 30, memoryRssBytes: process.memoryUsage().rss, sources });
     return;
   }
 

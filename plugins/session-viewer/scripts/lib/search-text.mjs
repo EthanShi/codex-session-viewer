@@ -1,3 +1,5 @@
+import { normalizeCodexEvent } from "./codex-events.mjs";
+
 // Only readable, persisted values enter the index. Media payloads and encrypted
 // reasoning are deliberately excluded before values are stringified.
 const MEDIA_TYPES = /^(?:input_|output_)?(?:image|audio|video)(?:_url)?$/i;
@@ -71,6 +73,20 @@ export function* extractReadableText(source, item) {
     if (typeof text === "string" && text.trim()) yield { kind, text };
   }
   if (source === "codex") {
+    const event = normalizeCodexEvent(item);
+    if (event) {
+      if (["query", "agent-query", "assistant"].includes(event.kind)) {
+        yield* emit(event.kind === "query" ? "user" : "assistant", cleanText(event.text));
+      } else if (event.kind === "reasoning") {
+        for (const text of [...event.summary, ...event.content]) yield* emit("reasoning", cleanText(text));
+      } else {
+        yield* emit("tool", cleanText(event.name));
+        yield* emit("tool-input", readableValue(event.input));
+        yield* emit("tool-output", readableValue(event.output));
+        if (event.status != null || event.exitCode != null) yield* emit("tool-output", readableValue({ status: event.status, exitCode: event.exitCode }));
+      }
+      return;
+    }
     const payload = item?.payload || {};
     const type = payload.type;
     if (item?.type === "session_meta" || item?.type === "turn_context") {

@@ -1,6 +1,6 @@
 {
   "name": "session-viewer",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Scan, inspect, and compare local Codex or Claude Code sessions in a private, read-only browser dashboard.",
   "author": {
     "name": "EthanShi",

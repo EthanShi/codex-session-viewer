@@ -499,7 +499,7 @@ function renderStepThinking(step) {
     );
   }
   for (const message of step.assistantMessages || []) {
-    items.push(renderTextBlock(message.phase === "final" ? "Final answer" : `Assistant · ${message.phase || "message"}`, message.text, "assistant-block"));
+    items.push(renderTextBlock(["final", "final_answer"].includes(message.phase) ? "Final answer" : message.phase === "plan" ? "Plan" : `Assistant · ${message.phase || "message"}`, message.text, "assistant-block"));
   }
   return items.length ? items.join("") : '<div class="empty-cell">No persisted thinking for this call</div>';
 }
@@ -507,6 +507,7 @@ function renderStepThinking(step) {
 function renderToolCall(call, index) {
   const input = call.input || "";
   const output = call.output || "";
+  const status = [call.status, call.exitCode != null ? `exit ${call.exitCode}` : null].filter(Boolean).join(" · ");
   const inputPart = input
     ? `<div class="tool-part"><div class="tool-part-header"><span>Input</span>${copyButton(input)}</div><pre>${escapeHtml(input)}</pre></div>`
     : "";
@@ -514,7 +515,7 @@ function renderToolCall(call, index) {
     ? renderCollapsedToolResult({ outputHtml: escapeHtml(output), copyControlHtml: copyButton(output) })
     : '<div class="tool-part tool-result"><div class="empty-cell">No persisted result</div></div>';
   return `<details class="tool-card" ${index === 0 ? "open" : ""}>
-    <summary><span class="tool-name">${escapeHtml(call.name || "tool call")}</span><span class="tool-kind">${escapeHtml(call.kind || "tool")}</span></summary>
+    <summary><span class="tool-name">${escapeHtml(call.name || "tool call")}</span><span class="tool-kind">${escapeHtml([call.kind || "tool", status].filter(Boolean).join(" · "))}</span></summary>
     <div class="tool-body">${inputPart}${outputPart}</div>
   </details>`;
 }

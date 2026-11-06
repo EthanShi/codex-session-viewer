@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { MAX_QUERY_CHARACTERS } from "./search-text.mjs";
+import { CODEX_PARSER_VERSION } from "./codex-events.mjs";
 import { releaseWriterLease } from "./search-lease.mjs";
 import { normalizeDateRange, publicDateRange, rangeKey } from "../../assets/date-range.mjs";
 
@@ -114,21 +115,28 @@ export function createSearchService({ sources, cacheRoot } = {}) {
   const cacheIdentity = Object.entries(configs).sort(([left], [right]) => left.localeCompare(right))
     .map(([source, config]) => [source, process.platform === "win32" ? config.root.toLowerCase() : config.root]);
   const cacheKey = createHash("sha256").update(JSON.stringify(cacheIdentity)).digest("hex").slice(0, 24);
-  const workerData = {
-    databasePath: path.join(directory, `index-v1-${cacheKey}.sqlite`),
-    sources: configs, leaseToken: randomUUID(),
-  };
+  // Older releases put both sources in one database. Keep that exact path for
+  // Claude; Codex uses an isolated parser-versioned cache and lease.
+  const databasePaths = Object.fromEntries(Object.keys(configs).map(source => [source,
+    path.join(directory, `index-v1-${cacheKey}${source === "codex" ? `-codex-p${CODEX_PARSER_VERSION}` : ""}.sqlite`)]));
   const statuses = new Map();
   const latestStatuses = new Map();
-  const writer = new WorkerClient(new URL("./search-index-worker.mjs", import.meta.url), workerData);
-  let reader;
+  const runtimes = new Map();
   let closed = false;
-  const readerReady = writer.ready.then(() => {
-    if (closed) throw abortError();
-    reader = new WorkerClient(new URL("./search-read-worker.mjs", import.meta.url), workerData);
-    return reader.ready;
-  });
-  readerReady.catch(() => {});
+  function runtime(source) {
+    requireSource(source);
+    if (runtimes.has(source)) return runtimes.get(source);
+    const workerData = { databasePath: databasePaths[source], sources: { [source]: configs[source] }, leaseToken: randomUUID() };
+    const value = { workerData, writer: new WorkerClient(new URL("./search-index-worker.mjs", import.meta.url), workerData) };
+    value.readerReady = value.writer.ready.then(() => {
+      if (closed) throw abortError();
+      value.reader = new WorkerClient(new URL("./search-read-worker.mjs", import.meta.url), workerData);
+      return value.reader.ready;
+    });
+    value.readerReady.catch(() => {});
+    runtimes.set(source, value);
+    return value;
+  }
   const tasks = new Map();
   const results = new Map();
   let resultBytes = 0;
@@ -163,7 +171,7 @@ export function createSearchService({ sources, cacheRoot } = {}) {
         }
       };
       updateStatus(source, range, task.progress);
-      task.promise = writer.call(method, { source, range, refresh }, controller.signal, progress).finally(() => {
+      task.promise = runtime(source).writer.call(method, { source, range, refresh }, controller.signal, progress).finally(() => {
         if (tasks.get(key) === current) tasks.delete(key);
       });
       task.promise.catch(() => {});
@@ -203,7 +211,8 @@ export function createSearchService({ sources, cacheRoot } = {}) {
   }
 
   return {
-    databasePath: workerData.databasePath,
+    databasePath: databasePaths.codex || databasePaths.claude,
+    databasePaths,
     async list(source, { range: input, refresh = false, signal, onProgress } = {}) {
       const range = normalizeDateRange(input);
       return publicListing(await runTask("summary", source, range, { refresh, signal, onProgress }));
@@ -225,12 +234,13 @@ export function createSearchService({ sources, cacheRoot } = {}) {
         results.set(key, entry);
         return structuredClone({ ...entry.value, query: text, errors: listing.errors, complete: listing.complete });
       }
-      await abortable(readerReady, signal);
+      const active = runtime(source);
+      await abortable(active.readerReady, signal);
       const progress = (value) => {
         updateStatus(source, range, value);
         try { onProgress?.(structuredClone(value)); } catch { /* Observer only. */ }
       };
-      const value = await reader.call("search", { source, query: text, range, fileIds: listing.fileIds,
+      const value = await active.reader.call("search", { source, query: text, range, fileIds: listing.fileIds,
         errors: listing.errors, complete: listing.complete }, signal, progress);
       const bytes = Buffer.byteLength(JSON.stringify(value));
       if (bytes <= RESULT_CACHE_BYTES && value.generation === listing.generation) {
@@ -258,7 +268,7 @@ export function createSearchService({ sources, cacheRoot } = {}) {
         }
         range = normalizeDateRange(input);
       }
-      return structuredClone(await writer.call("resolve", { source, sessionId: id, range }, signal));
+      return structuredClone(await runtime(source).writer.call("resolve", { source, sessionId: id, range }, signal));
     },
     status(source, { range: input } = {}) {
       requireSource(source);
@@ -271,8 +281,10 @@ export function createSearchService({ sources, cacheRoot } = {}) {
     async close() {
       if (closed) return;
       closed = true;
-      await Promise.allSettled([writer.close(), reader?.close()]);
-      releaseWriterLease(workerData.databasePath, workerData.leaseToken);
+      await Promise.allSettled([...runtimes.values()].map(async ({ writer, reader, workerData }) => {
+        await Promise.allSettled([writer.close(), reader?.close()]);
+        releaseWriterLease(workerData.databasePath, workerData.leaseToken);
+      }));
     },
   };
 }

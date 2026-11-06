@@ -99,7 +99,8 @@ async function seedV1Cache(root, file) {
   await mkdir(options.cacheRoot, { recursive: true });
   const identity = Object.entries(options.sources).sort(([left], [right]) => left.localeCompare(right)).map(([source, value]) => [source, process.platform === "win32" ? value.root.toLowerCase() : value.root]);
   const cacheKey = createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 24);
-  const databasePath = path.join(options.cacheRoot, `index-v1-${cacheKey}.sqlite`);
+  // Exercise schema migration independently of parser-cache invalidation.
+  const databasePath = path.join(options.cacheRoot, `index-v1-${cacheKey}-codex-p2.sqlite`);
   const stats = await stat(file);
   const fingerprint = `${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
   const sourceKey = `codex:${process.platform === "win32" ? options.sources.codex.root.toLowerCase() : options.sources.codex.root}`;
@@ -213,8 +214,9 @@ try {
   assert.deepEqual(recentHits.errors, [], "cached errors from outside range are not exposed in recent results");
   assert.equal(recentHits.complete, true);
 
-  const bigRecord = records([message("z".repeat(1200) + "shared-build-marker")]);
-  const sharedFile = await writeSession(10, localDay(), [bigRecord.repeat(15000)]);
+  // Distinct text is necessary now that identical search blocks are deduplicated.
+  const bigRecords = records(Array.from({ length: 15000 }, (_, i) => message("z".repeat(1200) + "shared-build-marker-" + i)));
+  const sharedFile = await writeSession(10, localDay(), [bigRecords]);
   await listing();
   const one = new AbortController();
   const two = new AbortController();
@@ -226,7 +228,7 @@ try {
   assert.deepEqual((await secondWaiter).matches.map((match) => match.id), [id(10)], "cancelling one waiter does not stop a shared build");
   assert.equal(fileState(sharedFile).body_fingerprint, fileState(sharedFile).observed_fingerprint);
 
-  const cancelledFile = await writeSession(11, localDay(), [bigRecord.repeat(15000)]);
+  const cancelledFile = await writeSession(11, localDay(), [bigRecords]);
   await listing();
   const cancelledOne = new AbortController();
   const cancelledTwo = new AbortController();

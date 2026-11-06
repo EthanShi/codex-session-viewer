@@ -100,6 +100,8 @@ test("launcher returns the local URL without opening it automatically", () => {
   assert.doesNotMatch(launcher, /Start-Process\s+\$viewerUrl/i);
   assert.match(launcher, /health\.sources\.codex/i);
   assert.match(launcher, /health\.sources\.claude/i);
+  assert.match(launcher, /Health\.codexParserVersion -eq 2/i);
+  assert.equal((launcher.match(/if \(Test-ViewerCompatibility \$health\)/g) || []).length, 2, "reuse and startup both require the current parser");
 });
 
 test("Codex and Claude Code are separate selectable session sources", () => {

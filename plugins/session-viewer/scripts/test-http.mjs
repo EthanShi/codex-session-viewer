@@ -68,6 +68,7 @@ try {
   };
   const health = await (await get("/api/health")).json();
   assert.equal(health.searchVersion, 2);
+  assert.equal(health.codexParserVersion, 2);
   assert.equal(health.rangeSearch, true);
   assert.equal(health.maxRangeDays, 30);
   assert.ok(health.memoryRssBytes > 0);

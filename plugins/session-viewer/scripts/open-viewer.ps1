@@ -23,6 +23,11 @@ function Get-ViewerHealth([int]$CandidatePort) {
   return $null
 }
 
+function Test-ViewerCompatibility($Health) {
+  return ($Health -and $Health.ok -eq $true -and $Health.sources.codex -and $Health.sources.claude -and
+    $Health.searchVersion -eq 2 -and $Health.rangeSearch -eq $true -and $Health.codexParserVersion -eq 2)
+}
+
 $selectedPort = $null
 $viewerProcess = $null
 $launchId = [guid]::NewGuid().ToString('N')
@@ -31,7 +36,7 @@ $candidatePorts = $Port..($Port + 10)
 foreach ($candidatePort in $candidatePorts) {
   $health = Get-ViewerHealth $candidatePort
   if ($health) {
-    if ($health.searchVersion -eq 2 -and $health.rangeSearch -eq $true) {
+    if (Test-ViewerCompatibility $health) {
       $selectedPort = $candidatePort
       break
     }
@@ -54,7 +59,7 @@ foreach ($candidatePort in $candidatePorts) {
   for ($attempt = 0; $attempt -lt 40; $attempt++) {
     Start-Sleep -Milliseconds 100
     $health = Get-ViewerHealth $candidatePort
-    if ($health -and $health.searchVersion -eq 2 -and $health.rangeSearch -eq $true) {
+    if (Test-ViewerCompatibility $health) {
       $selectedPort = $candidatePort
       break
     }

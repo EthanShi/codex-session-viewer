@@ -1,4 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
+import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { summarizeFile as summarizeCodex, readSessionIndex } from "./session-parser.mjs";
@@ -228,6 +229,7 @@ async function ensureBody(source, file, catalog, ctx) {
   const generation = file.active_generation + 1;
   await deleteChunks(db, "file_id=? AND generation=?", [file.id, generation]);
   let block = 0, batch = [], published = false;
+  const seenText = new Set();
   const flush = () => {
     if (!batch.length) return;
     transaction(db, () => { for (const row of batch) insertChunk.run(file.id, generation, ...row); });
@@ -236,6 +238,11 @@ async function ensureBody(source, file, catalog, ctx) {
   const onRecord = async (record) => {
     ctx.checkCanceled();
     for (const value of extractReadableText(source, record)) {
+      if (source === "codex") {
+        const digest = createHash("sha256").update(value.kind).update("\0").update(value.text).digest("hex");
+        if (seenText.has(digest)) continue;
+        seenText.add(digest);
+      }
       let ordinal = 0;
       for (const text of chunkText(value.text)) {
         ctx.checkCanceled();

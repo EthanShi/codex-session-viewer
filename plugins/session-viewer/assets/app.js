@@ -6,7 +6,7 @@ import {
   normalizeFontScale,
   saveFontScale,
 } from "./ui-preferences.mjs";
-import { renderCollapsedToolResult, renderCollapsedTurn } from "./ui-render.mjs";
+import { renderCollapsedToolResult, renderCollapsedTurn, renderCompaction } from "./ui-render.mjs";
 import {
   analyzeSystemPrompts,
   buildSideBySideDiff,
@@ -520,12 +520,18 @@ function renderToolCall(call, index) {
   </details>`;
 }
 
-function renderTurns(turns) {
-  if (!turns.length) {
+function renderCompactionMarker(marker) {
+  return renderCompaction(marker, formatDate(marker.timestamp, { short: true }), marker.summary ? copyButton(marker.summary) : "");
+}
+
+function renderTurns(turns, compactions = []) {
+  if (!turns.length && !compactions.length) {
     elements.turns.innerHTML = '<div class="list-message">This session has no persisted turns.</div>';
     return;
   }
-  elements.turns.innerHTML = turns
+  const turnIds = new Set(turns.map(turn => turn.id));
+  const unanchored = compactions.filter(marker => !turnIds.has(marker.turnId)).map(renderCompactionMarker).join("");
+  elements.turns.innerHTML = unanchored + turns
     .map((turn) => {
       const query = turn.query || "No persisted query";
       const attachments = (turn.queryAttachments || []).length
@@ -542,6 +548,7 @@ function renderTurns(turns) {
           }];
       const stepRows = steps
         .map((step) => {
+          if (step.compaction) return renderCompactionMarker(step.compaction);
           const tools = (step.toolCalls || []).length
             ? step.toolCalls.map(renderToolCall).join("")
             : '<div class="empty-cell">No tool call in this step</div>';
@@ -564,7 +571,7 @@ function renderTurns(turns) {
             <span>${escapeHtml(formatDate(turn.startedAt, { short: true }))}</span>
             <span>·</span>
             <span>${escapeHtml(formatDuration(turn.durationMs))}</span>
-            <span class="turn-summary">${steps.length} steps · ${(turn.toolCalls || []).length} calls</span>
+            <span class="turn-summary">${steps.filter(step => !step.compaction).length} steps · ${(turn.toolCalls || []).length} calls</span>
           </div>
           ${renderTextBlock("Query", query, "query-block")}${attachments}`;
       const bodyHtml = `<div class="step-header step-grid">
@@ -572,7 +579,8 @@ function renderTurns(turns) {
           <div><span class="column-number">02</span> Tool calls &amp; results</div>
         </div>
         <div class="step-list">${stepRows}</div>`;
-      return renderCollapsedTurn({ queryHtml, bodyHtml });
+      const markers = placement => compactions.filter(marker => marker.turnId === turn.id && marker.placement === placement).map(renderCompactionMarker).join("");
+      return markers("before") + renderCollapsedTurn({ queryHtml, bodyHtml }) + markers("after");
     })
     .join("");
 }
@@ -722,7 +730,7 @@ function renderDetail(data) {
     metadataItem(config.fileLabel, summary.filePath),
   ].join("");
   renderSystemPrompts(systemPrompts || []);
-  renderTurns(turns || []);
+  renderTurns(turns || [], data.compactions || []);
 }
 
 function showToast(message) {

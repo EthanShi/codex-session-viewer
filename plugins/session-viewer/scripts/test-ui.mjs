@@ -26,6 +26,17 @@ const documentHtml = readFileSync(path.join(pluginRoot, "assets", "index.html"),
 const application = readFileSync(path.join(pluginRoot, "assets", "app.js"), "utf8");
 const server = readFileSync(path.join(pluginRoot, "scripts", "server.mjs"), "utf8");
 
+test("compaction disclosures start closed, escape summaries and explain unavailable text", () => {
+  const html = renderers.renderCompaction({ summary: '<script>alert("x")</script>\nSummary' }, "11/06 22:22");
+  assert.match(html, /^<details class="compaction-marker">/);
+  assert.doesNotMatch(html, /<script>|\sopen(?:\s|>)/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /查看压缩摘要/);
+  assert.match(html, /11\/06 22:22/);
+  assert.match(renderers.renderCompaction({ encrypted: true }), /摘要已加密，无法显示/);
+  assert.match(renderers.renderCompaction({}), /没有保存可读摘要/);
+});
+
 function memoryStorage(initial = {}) {
   const values = new Map(Object.entries(initial));
   return {

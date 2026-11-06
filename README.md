@@ -36,6 +36,8 @@ Codex starts the local service and replies with a clickable **Open Session Viewe
 
 Version 0.3.1 supports Codex 0.167.0-alpha.3.2 JSONL sessions, including paginated-history completed items, Unix-second timestamps, authoritative user inputs, and complete command outputs. Older JSONL sessions remain supported. The viewer continues to read local logs without connecting to App Server or changing Codex's session databases.
 
+Context compaction appears as a collapsible divider at its position in the session, including between steps when it happens during a turn. Expand it to read a persisted plaintext summary. If the log only contains an encrypted summary or no summary, the divider explains that limitation; retained messages are not presented as a generated summary. Compaction does not create a separate session or increase the turn count.
+
 Codex uses a new parser-versioned search cache. Its first search rebuilds the selected range; opening a list still reads summaries only. Old cache files are retained, and Claude Code continues to reuse the original cache. The launcher requires parser version 2 before reusing an existing service. An older service may continue on its current port; the launcher returns a different available port for the new version. If you also need Claude Code while an older viewer is running, stop that older viewer first so it releases the shared Claude cache lease.
 
 ```powershell

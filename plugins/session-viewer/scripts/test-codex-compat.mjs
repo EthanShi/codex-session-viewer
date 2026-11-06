@@ -24,6 +24,59 @@ async function fixture(rows, check) {
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
+test("compaction boundaries preserve plaintext summaries without inventing turns", async () => {
+  await fixture([
+    record("compacted", { message: "Before any turn" }),
+    start(), record("compacted", { message: "Previous work summary", window_id: "w1" }), user("u", "Continue"),
+    completed("AgentMessage", "a", { content: [{ text: "Before compression" }] }),
+    record("compacted", { message: "Mid-turn summary" }),
+    completed("AgentMessage", "b", { content: [{ text: "After compression" }] }),
+    event("task_complete", { turn_id: "t1" }),
+    record("compacted", { message: "Trailing summary" }),
+  ], detail => {
+    assert.equal(detail.turns.length, 1);
+    assert.deepEqual(detail.compactions.map(c => [c.placement, c.summary]), [
+      ["before", "Before any turn"], ["before", "Previous work summary"], ["after", "Trailing summary"],
+    ]);
+    const steps = detail.turns[0].steps;
+    assert.equal(steps[0].assistantMessages[0].text, "Before compression");
+    assert.equal(steps[1].compaction.summary, "Mid-turn summary");
+    assert.equal(steps[2].assistantMessages[0].text, "After compression");
+    assert.equal(detail.turns[0].thinking.length, 0);
+  });
+});
+
+test("encrypted, missing and legacy compaction summaries stay explicit and exclude retained messages", async () => {
+  await fixture([
+    start(), record("compacted", { message: "", replacement_history: [
+      { type: "message", role: "user", content: [{ text: "Not a summary" }] },
+      { type: "compaction", encrypted_content: "SECRET-COMPACTION" },
+    ] }), user("u", "Continue"),
+    event("context_compacted", { turn_id: "t1", message: "Legacy summary" }),
+    event("task_complete", { turn_id: "t1" }),
+    record("compacted", {}),
+  ], detail => {
+    assert.equal(detail.compactions[0].summary, "");
+    assert.equal(detail.compactions[0].encrypted, true);
+    assert.equal(detail.compactions.at(-1).summary, "");
+    assert.equal(detail.compactions.at(-1).encrypted, false);
+    assert.doesNotMatch(JSON.stringify(detail), /SECRET-COMPACTION|Not a summary/);
+    assert.equal(detail.turns[0].steps[0].compaction.summary, "Legacy summary");
+  });
+});
+
+test("dedicated empty compaction turns anchor between visible turns and at EOF", async () => {
+  await fixture([
+    start(), user("u", "First"), event("task_complete", { turn_id: "t1" }),
+    start("compression"), record("compacted", { message: "Between turns" }),
+    start("t2"), user("u2", "Second", "t2"), event("task_complete", { turn_id: "t2" }),
+    start("compression-at-eof"), record("compacted", { message: "After last turn" }),
+  ], detail => {
+    assert.deepEqual(detail.turns.map(t => t.id), ["t1", "t2"]);
+    assert.deepEqual(detail.compactions.map(c => [c.turnId, c.placement]), [["t2", "before"], ["t2", "after"]]);
+  });
+});
+
 test("paginated user items override injected context and provide the preview", async () => {
   await fixture([
     start(), response("message", { role: "user", content: [{ text: "Actual question" }] }),

@@ -290,5 +290,5 @@ export async function readSession(filePath, archived = false) {
   metadata.systemPromptCount = systemPrompts.length;
   metadata.systemPromptCharacters = systemPrompts.reduce((total, prompt) => total + prompt.characterCount, 0);
   metadata.estimatedSystemPromptTokens = systemPrompts.reduce((total, prompt) => total + prompt.estimatedTokens, 0);
-  return { metadata, systemPrompts, turns };
+  return { metadata, systemPrompts, turns, compactions: assembler.compactions };
 }

@@ -1,4 +1,4 @@
-import { normalizeCodexEvent, createQueryCollector, isoTime, eventTime } from "./codex-events.mjs";
+import { normalizeCodexEvent, createQueryCollector, isoTime, eventTime, contentText } from "./codex-events.mjs";
 
 function stringify(value) {
   if (typeof value === "string") {
@@ -11,6 +11,8 @@ function stringify(value) {
 export function createTurnAssembler() {
   const turns = [], byTurn = new Map(), owners = new Map();
   const queries = createQueryCollector();
+  const compactions = [];
+  let compactionOrdinal = 0;
   let current = null, anonymous = 0;
   function getTurn(id, timestamp, activate = false) {
     let turn = id ? byTurn.get(id) : current;
@@ -59,8 +61,28 @@ export function createTurnAssembler() {
     }
   }
   return {
+    compactions,
     observe(record) {
       const p = record.payload || {}, timestamp = isoTime(record.timestamp);
+      if (record.type === "compacted" || (record.type === "event_msg" && p.type === "context_compacted")) {
+        // replacement_history also contains retained instructions and messages;
+        // only the explicit compaction item can supply a summary from there.
+        const replacements = Array.isArray(p.replacement_history) ? p.replacement_history : [];
+        const summaries = replacements.filter(item => item?.type === "compaction");
+        const summary = contentText(p.message).trim() || contentText(p.summary).trim() || summaries
+          .map(item => contentText(item.summary) || contentText(item.content)).filter(Boolean).join("\n\n").trim();
+        const marker = { id: `compaction-${++compactionOrdinal}`, timestamp, summary,
+          encrypted: Boolean(p.encrypted_content || summaries.some(item => item.encrypted_content)) };
+        const turn = (p.turn_id && byTurn.get(p.turn_id)) || current;
+        if (!turn || (!turn.entries.length && !queries.entries(turn.id).length)) {
+          compactions.push({ ...marker, turnId: turn?.id || null, placement: "before" });
+        } else if (turn.status !== "incomplete") {
+          compactions.push({ ...marker, turnId: turn.id, placement: "after" });
+        } else {
+          turn.entries.push({ kind: "compaction", marker });
+        }
+        return;
+      }
       if (p.type === "task_started" || record.type === "turn_context") {
         const turn = getTurn(p.turn_id, timestamp, true);
         if (p.type === "task_started") turn.startedAt = eventTime(p, "started_at", timestamp);
@@ -78,9 +100,6 @@ export function createTurnAssembler() {
         const turn = getTurn(target, event.timestamp);
         queries.add(record, { ...event, turnId: turn.id });
         if (!["query", "agent-query"].includes(event.kind)) add(turn, event);
-      } else if (p.type === "context_compacted") {
-        add(getTurn(p.turn_id, timestamp), { kind: "reasoning", ids: [], rank: 1, timestamp,
-          summary: [], content: ["Context was compacted during this turn."], hidden: false, context: true });
       } else if (["task_complete", "turn_aborted"].includes(p.type)) {
         const turn = getTurn(p.turn_id, timestamp);
         turn.completedAt = eventTime(p, "completed_at", timestamp);
@@ -91,7 +110,7 @@ export function createTurnAssembler() {
       }
     },
     finish() {
-      return turns.map(turn => {
+      const result = turns.map(turn => {
         const selected = queries.entries(turn.id);
         const value = { id: turn.id, startedAt: turn.startedAt, completedAt: turn.completedAt,
           durationMs: turn.durationMs, status: turn.status, model: turn.model, cwd: turn.cwd,
@@ -106,6 +125,11 @@ export function createTurnAssembler() {
           return step;
         }
         for (const entry of turn.entries) {
+          if (entry.kind === "compaction") {
+            value.steps.push({ compaction: entry.marker });
+            step = null;
+            continue;
+          }
           const active = nextStep(entry.kind !== "tool" && step?.toolCalls.length > 0);
           active.startedAt ||= entry.timestamp;
           if (entry.kind === "assistant") {
@@ -133,11 +157,25 @@ export function createTurnAssembler() {
           const message = { text: turn.finalFallback, phase: "final", timestamp: turn.completedAt };
           value.assistantMessages.push(message); nextStep(Boolean(step?.toolCalls.length)).assistantMessages.push(message);
         }
-        value.steps = value.steps.filter(s => s.thinking.length || s.hiddenReasoningCount || s.assistantMessages.length || s.toolCalls.length)
-          .map((s, index) => ({ ...s, ordinal: index + 1 }));
+        let ordinal = 0;
+        value.steps = value.steps.filter(s => s.compaction || s.thinking.length || s.hiddenReasoningCount || s.assistantMessages.length || s.toolCalls.length)
+          .map(s => s.compaction ? s : { ...s, ordinal: ++ordinal });
         return value;
-      }).filter(t => t.query || t.queryAttachments.length || t.thinking.length || t.hiddenReasoningCount || t.assistantMessages.length || t.toolCalls.length)
+      }).filter(t => t.query || t.queryAttachments.length || t.thinking.length || t.hiddenReasoningCount || t.assistantMessages.length || t.toolCalls.length || t.steps.some(s => s.compaction))
         .map((t, index) => ({ ...t, ordinal: index + 1 }));
+      // Codex may use a dedicated empty turn for compaction. Anchor its divider
+      // to the next visible turn (or the previous one at EOF), without inventing
+      // a user turn or moving the divider to the beginning of the session.
+      const visible = new Set(result.map(turn => turn.id));
+      for (const marker of compactions) {
+        if (!marker.turnId || visible.has(marker.turnId)) continue;
+        const index = turns.findIndex(turn => turn.id === marker.turnId);
+        const next = turns.slice(index + 1).find(turn => visible.has(turn.id));
+        const previous = turns.slice(0, index).findLast(turn => visible.has(turn.id));
+        marker.turnId = next?.id || previous?.id || null;
+        marker.placement = next ? "before" : "after";
+      }
+      return result;
     },
   };
 }
